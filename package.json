@@ -1,0 +1,19 @@
+{
+  "name": "cdr-dashboard",
+  "version": "1.0.0",
+  "description": "CDR Dashboard for Investigation Analytics - Operation ECHO",
+  "main": "index.js",
+  "scripts": {
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build"
+  },
+  "keywords": ["cdr", "dashboard", "analytics", "investigation"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

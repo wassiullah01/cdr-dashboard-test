@@ -1,0 +1,37 @@
+node_modules/
+.env
+.env.local
+.DS_Store
+dist/
+build/
+*.log
+uploads/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Internal documentation files (keep only README.md)
+*_FIX*.md
+*_GUIDE*.md
+QUICK_START.md
+PROJECT_GAP_ANALYSIS.md
+DATA_CORRECTNESS_FIXES.md
+FILTERING_DEBUG_FIX.md
+SESSION_FILTERING_FIX.md
+SITE_LOCATION_FIX.md
+UPLOAD_SESSION_AND_DATE_FIXES.md
+UPLOADID_FIX_COMPLETE.md
+VERIFICATION_GUIDE.md
+SERVER_FIXES.md
+
+# Coding test materials
+coding test/
+
+# Sample data files
+*.csv
+*.xlsx
+*.xls
+!package-lock.json
+!package.json
