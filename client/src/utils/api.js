@@ -26,8 +26,15 @@ const getApiBaseUrl = () => {
 };
 
 export const API_BASE_URL = getApiBaseUrl();
+
+// Debug: Log API base URL in production (remove in final version if desired)
+if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+  console.log('[API Config] Base URL:', API_BASE_URL || '(using relative paths)');
+}
+
 export const apiUrl = (endpoint) => {
   // Remove leading slash if present to avoid double slashes
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${cleanEndpoint}`;
+  const fullUrl = `${API_BASE_URL}${cleanEndpoint}`;
+  return fullUrl;
 };

@@ -363,9 +363,6 @@ The application is deployed on Vercel with separate projects for frontend and ba
 ### Event Details
 ![Event Details](screenshots/event%20details.PNG)
 
-### Responsive Design
-![Responsive Design](screenshots/responsive%20design.png)
-
 ## Limitations & Future Improvements
 
 **Intentionally Not Implemented (Time Constraints):**
