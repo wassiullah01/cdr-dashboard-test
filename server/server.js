@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 5000;
 // In development, allow localhost
 const allowedOrigins = [
   process.env.FRONTEND_URL, // Production frontend URL from env
+  'https://cdr-dashboard-client.vercel.app', // Production frontend (fallback if env not set)
   'http://localhost:3000',   // Local development
   'http://127.0.0.1:3000'     // Alternative localhost
 ].filter(Boolean); 

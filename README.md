@@ -338,9 +338,10 @@ The application is deployed on Vercel with separate projects for frontend and ba
 - `NODE_ENV`: production
 
 **Frontend Configuration:**
-- For production: Set `VITE_API_BASE_URL=https://cdr-dashboard-server.vercel.app` in Vercel environment variables
-- For local development: Create `client/.env` with `VITE_API_BASE_URL=` (empty) to use Vite proxy
-- The code automatically detects the environment and uses the appropriate API URL configuration
+- The frontend automatically detects production vs development
+- In production: Uses `https://cdr-dashboard-server.vercel.app` as backend URL
+- In local development: Uses relative paths (Vite proxy handles routing to `http://localhost:5000`)
+- Optional: Set `VITE_API_BASE_URL` in Vercel environment variables to override the default production URL
 
 ## Screenshots
 
