@@ -114,17 +114,6 @@ router.post('/', async (req, res) => {
           // Use insertMany with ordered: false to continue on errors
           const insertResult = await Event.insertMany(eventsWithSession, { ordered: false });
           inserted = insertResult.length;
-          
-          // Dev-only verification: Check MongoDB count matches inserted count
-          if (process.env.NODE_ENV === 'development') {
-            const mongoCount = await Event.countDocuments({ uploadId });
-            console.log(`[DEBUG] Ingestion verification for ${fileInfo.originalName}:`, {
-              uploadIdUsed: uploadId,
-              insertedCount: inserted,
-              mongoCountForUploadId: mongoCount,
-              match: inserted === mongoCount ? '✓ MATCH' : '✗ MISMATCH'
-            });
-          }
         } catch (error) {
           // Some records may have failed, but some may have succeeded
           // Count actual inserted by checking writeErrors
@@ -136,16 +125,6 @@ router.post('/', async (req, res) => {
             // If we can't determine, assume none were inserted
             inserted = 0;
             console.error(`Database insert error for ${fileInfo.originalName}:`, error.message);
-          }
-          
-          // Dev-only: Still verify even on partial failure
-          if (process.env.NODE_ENV === 'development' && inserted > 0) {
-            const mongoCount = await Event.countDocuments({ uploadId });
-            console.log(`[DEBUG] Ingestion verification (partial) for ${fileInfo.originalName}:`, {
-              uploadIdUsed: uploadId,
-              insertedCount: inserted,
-              mongoCountForUploadId: mongoCount
-            });
           }
         }
       }
@@ -194,20 +173,6 @@ router.post('/', async (req, res) => {
     } catch (dbError) {
       console.error('Error updating upload record:', dbError.message);
       // Continue even if we can't update the upload record
-    }
-
-    // STEP 1: Final MongoDB verification (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      const totalAll = await Event.countDocuments({});
-      const totalForUpload = await Event.countDocuments({ uploadId });
-      console.log('[DEBUG] Final ingestion verification:', {
-        uploadIdUsed: uploadId,
-        totalInserted: totalInserted,
-        totalAllEvents: totalAll,
-        totalForUploadId: totalForUpload,
-        match: totalInserted === totalForUpload ? '✓ MATCH' : '✗ MISMATCH',
-        expected: `totalForUpload (${totalForUpload}) should equal totalInserted (${totalInserted})`
-      });
     }
 
     res.json({

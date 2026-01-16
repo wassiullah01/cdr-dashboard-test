@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { apiUrl } from '../utils/api';
 import '../styles/dashboard.css';
 
 function TimelineChart({ filters, uploadId, viewMode }) {
@@ -28,7 +29,7 @@ function TimelineChart({ filters, uploadId, viewMode }) {
       
       params.append('groupBy', 'day');
 
-      const response = await fetch(`/api/analytics/timeline?${params}`);
+      const response = await fetch(apiUrl(`/api/analytics/timeline?${params}`));
       const result = await response.json();
       setData(result.timeline || []);
     } catch (error) {

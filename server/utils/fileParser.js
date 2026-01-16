@@ -154,34 +154,13 @@ export function parseExcel(buffer, fileName) {
         return;
       }
       
-          // Debug logging for specific file (privacy-safe)
-          const isDebugFile = fileName.includes('anonymized_923034167919.xlsx');
-          const debugSamples = [];
-          const dateDebugSamples = []; // For date parsing validation
-          
-          // Verify Site column is present and at correct index (for debugging)
+          // Verify Site column is present and at correct index
           const siteColumnIndex = cleanedHeaders.findIndex(h => String(h || '').trim().toLowerCase() === 'site');
           const originalSiteIndex = processedHeaders.findIndex(h => String(h || '').trim().toLowerCase() === 'site');
-          
-          if (isDebugFile) {
-            console.log(`[DEBUG] Site column check for ${fileName} (sheet: ${sheetName}):`);
-            console.log(`  Original Site column index: ${originalSiteIndex}`);
-            console.log(`  Site column in cleaned headers index: ${siteColumnIndex}`);
-            console.log(`  Site column preserved: ${siteColumnIndex >= 0}`);
-            if (siteColumnIndex >= 0) {
-              console.log(`  Site column value in header row: "${cleanedHeaders[siteColumnIndex]}"`);
-            }
-          }
           
           if (originalSiteIndex >= 0 && siteColumnIndex < 0) {
             console.error(`[ERROR] Site column was dropped during cleaning for ${fileName}! Original index: ${originalSiteIndex}`);
           }
-          
-          // Find startTime column index for date validation
-          const startTimeHeaderIdx = cleanedHeaders.findIndex(h => {
-            const hLower = String(h || '').trim().toLowerCase();
-            return hLower.includes('start') || hLower.includes('time') || hLower.includes('date');
-          });
       
       // Process data rows (skip header row and any rows before it)
       for (let i = headerRowIndex + 1; i < rawData.length; i++) {
@@ -199,49 +178,11 @@ export function parseExcel(buffer, fileName) {
           return (idx < rawRow.length) ? (rawRow[idx] || '') : '';
         });
 
-        // Debug logging for first 5 rows of specific file
-        if (isDebugFile && debugSamples.length < 5) {
-          const siteIdx = cleanedHeaders.findIndex(h => String(h || '').trim().toLowerCase() === 'site');
-          const siteValue = (siteIdx >= 0 && siteIdx < row.length) ? row[siteIdx] : null;
-          debugSamples.push({
-            rowNumber: i + 1,
-            detectedHeaders: cleanedHeaders,
-            siteColumnIndex: siteIdx,
-            siteValueLength: siteValue ? String(siteValue).length : 0,
-            siteContainsPipe: siteValue ? String(siteValue).includes('|') : false,
-            siteValuePreview: siteValue ? String(siteValue).substring(0, 50) : null
-          });
-        }
-        
-        // Date parsing validation logging (privacy-safe, only for Excel files)
-        if ((fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) && dateDebugSamples.length < 5 && startTimeHeaderIdx >= 0) {
-          const rawStartTimeValue = (startTimeHeaderIdx < row.length) ? row[startTimeHeaderIdx] : null;
-          if (rawStartTimeValue !== null && rawStartTimeValue !== undefined && rawStartTimeValue !== '') {
-            dateDebugSamples.push({
-              rowNumber: i + 1,
-              rawType: typeof rawStartTimeValue,
-              rawValuePreview: typeof rawStartTimeValue === 'string' 
-                ? String(rawStartTimeValue).substring(0, 30) 
-                : (typeof rawStartTimeValue === 'number' ? rawStartTimeValue : 'Date object'),
-              fileName,
-              sheetName
-            });
-          }
-        }
-
         const normalized = normalizeRow(row, cleanedHeaders, {
           fileName,
           sheetName,
           rowNumber: i + 1
         });
-        
-        // Log parsed date for validation (after normalization)
-        if ((fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) && dateDebugSamples.length > 0 && normalized.startTime) {
-          const sampleIdx = dateDebugSamples.findIndex(s => s.rowNumber === i + 1);
-          if (sampleIdx >= 0) {
-            dateDebugSamples[sampleIdx].parsedISO = normalized.startTime.toISOString();
-          }
-        }
 
         if (normalized.error) {
           errors.push({
@@ -253,22 +194,6 @@ export function parseExcel(buffer, fileName) {
         } else {
           results.push(normalized);
         }
-      }
-      
-      // Log debug samples (privacy-safe, no full CDR data)
-      if (isDebugFile && debugSamples.length > 0) {
-        console.log(`[DEBUG] Site parsing samples for ${fileName} (sheet: ${sheetName}):`);
-        debugSamples.forEach(sample => {
-          console.log(`  Row ${sample.rowNumber}: Site col=${sample.siteColumnIndex}, len=${sample.siteValueLength}, hasPipe=${sample.siteContainsPipe}, preview="${sample.siteValuePreview}"`);
-        });
-      }
-      
-      // Log date parsing validation samples (privacy-safe)
-      if (dateDebugSamples.length > 0 && process.env.NODE_ENV === 'development') {
-        console.log(`[DEBUG] Date parsing samples for ${fileName} (sheet: ${sheetName}):`);
-        dateDebugSamples.forEach(sample => {
-          console.log(`  Row ${sample.rowNumber}: rawType=${sample.rawType}, rawValue="${sample.rawValuePreview}"`);
-        });
       }
     });
 

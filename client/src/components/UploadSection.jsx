@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
+import { apiUrl } from '../utils/api';
 import '../styles/filters.css';
 import '../styles/dashboard.css';
 
@@ -53,14 +54,14 @@ function UploadSection({ onUploadComplete }) {
         formData.append('files', file);
       });
 
-      const uploadResponse = await axios.post('/api/uploads', formData, {
+      const uploadResponse = await axios.post(apiUrl('/api/uploads'), formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
       setUploadProgress('Processing files...');
 
       // Step 2: Ingest files
-      const ingestResponse = await axios.post('/api/ingest', {
+      const ingestResponse = await axios.post(apiUrl('/api/ingest'), {
         files: uploadResponse.data.files
       });
 

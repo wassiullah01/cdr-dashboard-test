@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "CDR Dashboard for Investigation Analytics - Operation ECHO",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "install-all": "npm install && cd server && npm install && cd ../client && npm install",
     "dev": "concurrently \"npm run server\" \"npm run client\"",

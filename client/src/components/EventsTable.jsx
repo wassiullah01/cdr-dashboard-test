@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import EventDetailsModal from './EventDetailsModal';
+import { apiUrl } from '../utils/api';
 import '../styles/tables.css';
 
 function EventsTable({ filters, uploadId, viewMode }) {
@@ -36,7 +37,7 @@ function EventsTable({ filters, uploadId, viewMode }) {
       }
       // If no uploadId in current mode, backend will default to most recent
 
-      const response = await fetch(`/api/events?${params}`);
+      const response = await fetch(apiUrl(`/api/events?${params}`));
       const result = await response.json();
       setEvents(result.events || []);
       setPagination(result.pagination || pagination);

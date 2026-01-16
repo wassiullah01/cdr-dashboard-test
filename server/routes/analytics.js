@@ -32,16 +32,6 @@ router.get('/overview', async (req, res) => {
         { bParty: { $regex: number, $options: 'i' } }
       ];
     }
-    
-    // Debug logging BEFORE queries (dev only, no sensitive data)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/overview REQUEST:', {
-        includeAll: req.query.includeAll,
-        uploadIdReceived: req.query.uploadId,
-        uploadIdResolved: uploadId,
-        filterBeforeQueries: JSON.stringify(filter)
-      });
-    }
 
     // STEP 3: Execute ALL queries with the SAME filter object
     // CRITICAL: Every query MUST use filter (or spread of filter)
@@ -73,22 +63,6 @@ router.get('/overview', async (req, res) => {
     ]);
 
     const durationHours = totalDuration[0]?.total ? (totalDuration[0].total / 3600).toFixed(2) : 0;
-
-    // Debug logging AFTER queries (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/overview RESULTS:', {
-        uploadIdResolved: uploadId,
-        filterUsed: JSON.stringify(filter),
-        totalEvents,
-        totalCalls,
-        totalSMS,
-        incomingCount,
-        outgoingCount,
-        verification: uploadId 
-          ? `Expected: totalEvents should match count for uploadId=${uploadId}` 
-          : 'No uploadId filter (showing all or most recent)'
-      });
-    }
 
     res.json({
       totalEvents,
@@ -135,16 +109,6 @@ router.get('/timeline', async (req, res) => {
         { bParty: { $regex: number, $options: 'i' } }
       ];
     }
-    
-    // Debug logging BEFORE query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/timeline REQUEST:', {
-        includeAll: req.query.includeAll,
-        uploadIdReceived: req.query.uploadId,
-        uploadIdResolved: uploadId,
-        filterBeforeQuery: JSON.stringify(filter)
-      });
-    }
 
     const groupFormat = groupBy === 'hour'
       ? { $dateToString: { format: '%Y-%m-%d %H:00', date: '$startTime' } }
@@ -172,16 +136,6 @@ router.get('/timeline', async (req, res) => {
         }
       }
     ]);
-    
-    // Debug logging AFTER query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/timeline RESULTS:', {
-        uploadIdResolved: uploadId,
-        filterUsed: JSON.stringify(filter),
-        timelineDataPoints: timeline.length,
-        pipelineStages: ['$match (filter)', '$group', '$sort', '$project']
-      });
-    }
 
     res.json({ 
       timeline,
@@ -225,16 +179,6 @@ router.get('/top-contacts', async (req, res) => {
       if (startDate) filter.startTime.$gte = new Date(startDate);
       if (endDate) filter.startTime.$lte = new Date(endDate);
     }
-    
-    // Debug logging BEFORE query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/top-contacts REQUEST:', {
-        includeAll: req.query.includeAll,
-        uploadIdReceived: req.query.uploadId,
-        uploadIdResolved: uploadId,
-        filterBeforeQuery: JSON.stringify(filter)
-      });
-    }
 
     // CRITICAL: Event.find MUST use filter (includes uploadId if provided)
     const events = await Event.find(filter).lean();
@@ -277,16 +221,6 @@ router.get('/top-contacts', async (req, res) => {
         ...contact,
         totalDurationHours: (contact.totalDuration / 3600).toFixed(2)
       }));
-    
-    // Debug logging AFTER query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/top-contacts RESULTS:', {
-        uploadIdResolved: uploadId,
-        filterUsed: JSON.stringify(filter),
-        eventsFound: events.length,
-        topContactsReturned: topContacts.length
-      });
-    }
 
     res.json({ 
       topContacts,
@@ -327,17 +261,6 @@ router.get('/geo', async (req, res) => {
         { bParty: { $regex: number, $options: 'i' } }
       ];
     }
-    
-    // Debug logging BEFORE query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/analytics/geo REQUEST:', {
-        includeAll: req.query.includeAll,
-        uploadIdReceived: req.query.uploadId,
-        uploadIdResolved: uploadId,
-        type,
-        filterBeforeQuery: JSON.stringify(filter)
-      });
-    }
 
     if (type === 'locations' && filter.lat && filter.lng) {
       // Return location points with lat/lng
@@ -350,15 +273,6 @@ router.get('/geo', async (req, res) => {
         .select('lat lng startTime site')
         .limit(1000)
         .lean();
-      
-      // Debug logging (dev only)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[DEBUG] /api/analytics/geo RESULTS (locations):', {
-          uploadIdResolved: uploadId,
-          filterUsed: JSON.stringify(filter),
-          locationsFound: locations.length
-        });
-      }
 
       res.json({ 
         locations,
@@ -395,16 +309,6 @@ router.get('/geo', async (req, res) => {
           }
         }
       ]);
-      
-      // Debug logging (dev only)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[DEBUG] /api/analytics/geo RESULTS (top items):', {
-          uploadIdResolved: uploadId,
-          filterUsed: JSON.stringify(matchFilter),
-          topItemsReturned: topItems.length,
-          pipelineStages: ['$match (filter)', '$group', '$sort', '$limit', '$project']
-        });
-      }
 
       res.json({ 
         topItems, 

@@ -12,7 +12,10 @@ uploads/
 *.swo
 *~
 
-# Internal documentation files (keep only README.md)
+# Client environment file (contains production API URL)
+client/.env
+
+# Internal documentation files
 *_FIX*.md
 *_GUIDE*.md
 QUICK_START.md

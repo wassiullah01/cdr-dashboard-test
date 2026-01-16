@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { apiUrl } from '../utils/api';
 import '../styles/dashboard.css';
 
 function TopContactsChart({ filters, uploadId, viewMode }) {
@@ -33,7 +34,7 @@ function TopContactsChart({ filters, uploadId, viewMode }) {
       
       params.append('limit', '10');
 
-      const response = await fetch(`/api/analytics/top-contacts?${params}`);
+      const response = await fetch(apiUrl(`/api/analytics/top-contacts?${params}`));
       const result = await response.json();
       setData(result.topContacts || []);
     } catch (error) {

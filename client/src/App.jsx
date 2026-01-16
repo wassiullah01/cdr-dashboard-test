@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Dashboard from './components/Dashboard';
+import { apiUrl } from './utils/api';
 import './styles/dashboard.css';
 
 function App() {
@@ -16,7 +17,7 @@ function App() {
     if (savedUploadId) {
       // Verify the uploadId actually has data in the database
       // If database was cleared, this will fail and we'll show upload page
-      fetch(`/api/analytics/overview?uploadId=${savedUploadId}`)
+      fetch(apiUrl(`/api/analytics/overview?uploadId=${savedUploadId}`))
         .then(res => res.json())
         .then(data => {
           // If we get data back and totalEvents > 0, the uploadId is valid

@@ -4,6 +4,7 @@ import SummaryCards from './SummaryCards';
 import TimelineChart from './TimelineChart';
 import TopContactsChart from './TopContactsChart';
 import EventsTable from './EventsTable';
+import { apiUrl } from '../utils/api';
 import '../styles/dashboard.css';
 
 function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange, onNewUpload }) {
@@ -49,7 +50,7 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
         // If no uploadId, backend will default to most recent
       }
 
-      const response = await fetch(`/api/analytics/overview?${params}`);
+      const response = await fetch(apiUrl(`/api/analytics/overview?${params}`));
       const data = await response.json();
       setOverview(data);
       

@@ -29,16 +29,6 @@ router.get('/', async (req, res) => {
     if (uploadId) {
       filter.uploadId = uploadId;
     }
-    
-    // Debug logging (dev only, no sensitive data)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/events:', {
-        includeAll: req.query.includeAll,
-        uploadIdReceived: req.query.uploadId,
-        uploadIdResolved: uploadId,
-        filter: JSON.stringify(filter)
-      });
-    }
 
     if (startDate || endDate) {
       filter.startTime = {};
@@ -80,19 +70,6 @@ router.get('/', async (req, res) => {
       .lean();
 
     const total = await Event.countDocuments(filter);
-    
-    // Debug logging AFTER query (dev only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] /api/events RESULTS:', {
-        uploadIdResolved: uploadId,
-        filterUsed: JSON.stringify(filter),
-        eventsReturned: events.length,
-        totalCount: total,
-        verification: uploadId 
-          ? `Expected: total should match count for uploadId=${uploadId}` 
-          : 'No uploadId filter (showing all or most recent)'
-      });
-    }
 
     res.json({
       events,

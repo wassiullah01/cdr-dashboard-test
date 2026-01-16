@@ -33,37 +33,16 @@ export async function getMostRecentUploadId() {
 export async function resolveUploadId(query) {
   const { uploadId, includeAll } = query;
 
-  // Debug logging (dev only)
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[DEBUG] resolveUploadId INPUT:', {
-      uploadIdReceived: uploadId,
-      includeAllReceived: includeAll,
-      uploadIdType: typeof uploadId,
-      includeAllType: typeof includeAll
-    });
-  }
-
   // Explicit includeAll flag means show all sessions
   if (includeAll === 'true' || includeAll === true) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] resolveUploadId RESULT: null (includeAll=true)');
-    }
     return null;
   }
 
   // If specific uploadId provided, use it (it's a UUID string, no validation needed)
   if (uploadId && typeof uploadId === 'string' && uploadId.trim()) {
-    const resolved = uploadId.trim();
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DEBUG] resolveUploadId RESULT:', resolved, '(from query param)');
-    }
-    return resolved;
+    return uploadId.trim();
   }
 
   // Default: use most recent uploadId
-  const mostRecent = await getMostRecentUploadId();
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[DEBUG] resolveUploadId RESULT:', mostRecent, '(most recent, defaulted)');
-  }
-  return mostRecent;
+  return await getMostRecentUploadId();
 }
