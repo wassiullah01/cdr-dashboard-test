@@ -94,10 +94,9 @@ The normalization layer handles the messy reality of CDR data formats.
 The application follows a standard MERN stack architecture with clear separation between client and server.
 
 **Client-Server Communication**
-- Frontend runs on Vite dev server (port 3000) or deployed on Vercel
-- Backend Express API (port 5000 locally, or Vercel serverless)
-- In production, frontend uses environment variable for API URL
-- In development, Vite proxy forwards `/api/*` requests to backend
+- Frontend runs on Vite dev server (port 3000)
+- Backend Express API (port 5000)
+- Vite proxy forwards `/api/*` requests to backend
 - RESTful API design with JSON responses
 
 **Data Flow**
@@ -289,18 +288,10 @@ npm run install-all
 
 **Environment Setup:**
 
-1. **Server** - Create `server/.env`:
+Create `server/.env`:
 ```
 PORT=5000
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/cdr_dashboard?retryWrites=true&w=majority
-NODE_ENV=development
-FRONTEND_URL=http://localhost:3000
-```
-
-2. **Client** - Create `client/.env`:
-```
-# Leave empty to use Vite proxy (for local development)
-VITE_API_BASE_URL=
 ```
 
 Get your MongoDB Atlas connection string from the Atlas dashboard (Database → Connect → Connect your application).
@@ -323,25 +314,6 @@ The frontend proxies API requests to the backend automatically via Vite.
 2. Create a database user (save credentials)
 3. Whitelist your IP (or use 0.0.0.0/0 for development)
 4. Get connection string and add to `server/.env`
-
-## Deployment
-
-The application is deployed on Vercel with separate projects for frontend and backend.
-
-**Production URLs:**
-- Frontend: https://cdr-dashboard-client.vercel.app
-- Backend: https://cdr-dashboard-server.vercel.app
-
-**Backend Environment Variables (Vercel):**
-- `MONGODB_URI`: MongoDB Atlas connection string (required)
-- `FRONTEND_URL`: https://cdr-dashboard-client.vercel.app (for CORS)
-- `NODE_ENV`: production
-
-**Frontend Configuration:**
-- The frontend automatically detects production vs development
-- In production: Uses `https://cdr-dashboard-server.vercel.app` as backend URL
-- In local development: Uses relative paths (Vite proxy handles routing to `http://localhost:5000`)
-- Optional: Set `VITE_API_BASE_URL` in Vercel environment variables to override the default production URL
 
 ## Screenshots
 
