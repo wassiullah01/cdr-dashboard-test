@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import uploadRoutes from './routes/upload.js';
 import ingestRoutes from './routes/ingest.js';
+import ingestCanonicalRoutes from './routes/ingestCanonical.js';
 import eventsRoutes from './routes/events.js';
 import analyticsRoutes from './routes/analytics.js';
 
@@ -28,6 +29,7 @@ app.use((err, req, res, next) => {
 // Routes
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/ingest', ingestRoutes);
+app.use('/api/ingest', ingestCanonicalRoutes); // Canonical ingestion endpoint
 app.use('/api/events', eventsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 

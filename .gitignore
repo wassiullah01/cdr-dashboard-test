@@ -15,20 +15,6 @@ uploads/
 # Client environment file (contains production API URL)
 client/.env
 
-# Internal documentation files
-*_FIX*.md
-*_GUIDE*.md
-QUICK_START.md
-PROJECT_GAP_ANALYSIS.md
-DATA_CORRECTNESS_FIXES.md
-FILTERING_DEBUG_FIX.md
-SESSION_FILTERING_FIX.md
-SITE_LOCATION_FIX.md
-UPLOAD_SESSION_AND_DATE_FIXES.md
-UPLOADID_FIX_COMPLETE.md
-VERIFICATION_GUIDE.md
-SERVER_FIXES.md
-
 # Coding test materials
 coding test/
 

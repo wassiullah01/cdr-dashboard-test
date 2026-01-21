@@ -144,17 +144,17 @@ function EventDetailsModal({ event, onClose }) {
 
           <div className="detail-row">
             <span className="detail-label">Latitude:</span>
-            <span>{event.lat ? event.lat.toFixed(6) : '-'}</span>
+            <span>{event._canonical?.latitude || event.lat ? (event._canonical?.latitude || event.lat).toFixed(6) : '-'}</span>
           </div>
 
           <div className="detail-row">
             <span className="detail-label">Longitude:</span>
-            <span>{event.lng ? event.lng.toFixed(6) : '-'}</span>
+            <span>{event._canonical?.longitude || event.lng ? (event._canonical?.longitude || event.lng).toFixed(6) : '-'}</span>
           </div>
 
           <div className="detail-row">
             <span className="detail-label">Cell ID:</span>
-            <span style={{ fontFamily: 'monospace' }}>{String(event.cellId || '-')}</span>
+            <span style={{ fontFamily: 'monospace' }}>{String(event._canonical?.cell_id || event.cellId || '-')}</span>
           </div>
 
           <div className="detail-row">
@@ -164,13 +164,32 @@ function EventDetailsModal({ event, onClose }) {
 
           <div className="detail-row">
             <span className="detail-label">IMEI:</span>
-            <span style={{ fontFamily: 'monospace' }}>{String(event.imei || '-')}</span>
+            <span style={{ fontFamily: 'monospace' }}>{String(event._canonical?.imei || event.imei || '-')}</span>
           </div>
 
           <div className="detail-row">
             <span className="detail-label">IMSI:</span>
-            <span style={{ fontFamily: 'monospace' }}>{String(event.imsi || '-')}</span>
+            <span style={{ fontFamily: 'monospace' }}>{String(event._canonical?.imsi || event.imsi || '-')}</span>
           </div>
+          
+          {event._canonical?.location_source && (
+            <div className="detail-row">
+              <span className="detail-label">Location Source:</span>
+              <span style={{ 
+                fontSize: '0.875rem',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                background: event._canonical.location_source === 'gps' ? '#10b98120' : 
+                           event._canonical.location_source === 'cell_id' ? '#3b82f620' : 
+                           '#64748b20',
+                color: event._canonical.location_source === 'gps' ? '#10b981' : 
+                      event._canonical.location_source === 'cell_id' ? '#3b82f6' : 
+                      '#64748b'
+              }}>
+                {event._canonical.location_source.toUpperCase()}
+              </span>
+            </div>
+          )}
 
           <div style={{
             marginTop: 'var(--spacing-lg)',

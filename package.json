@@ -11,10 +11,18 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build"
   },
-  "keywords": ["cdr", "dashboard", "analytics", "investigation"],
+  "keywords": [
+    "cdr",
+    "dashboard",
+    "analytics",
+    "investigation"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "react-router-dom": "^7.12.0"
   }
 }

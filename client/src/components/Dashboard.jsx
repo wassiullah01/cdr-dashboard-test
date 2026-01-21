@@ -18,6 +18,7 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
   });
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [resolvedUploadId, setResolvedUploadId] = useState(currentUploadId); // Track resolved ID from API
 
   // Update resolvedUploadId when currentUploadId prop changes
@@ -29,7 +30,16 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
 
   // Fetch overview when filters or view mode changes
   const fetchOverview = useCallback(async () => {
+    if (!currentUploadId && viewMode === 'current') {
+      // No uploadId in current mode - wait for it
+      setLoading(false);
+      setError(null);
+      setOverview(null);
+      return;
+    }
+    
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       if (filters.startDate) params.append('startDate', filters.startDate);
@@ -51,6 +61,11 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
       }
 
       const response = await fetch(apiUrl(`/api/analytics/overview?${params}`));
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch overview: ${response.status} ${response.statusText}`);
+      }
+      
       const data = await response.json();
       setOverview(data);
       
@@ -60,6 +75,7 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
       }
     } catch (error) {
       console.error('Failed to fetch overview:', error);
+      setError(error.message || 'Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
@@ -82,8 +98,28 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
       <div className="container">
         {uploadSummary && (
           <div className="success-message">
-            <strong>Upload Complete!</strong> Inserted: {uploadSummary.totalInserted}, 
-            Skipped: {uploadSummary.totalSkipped} across {uploadSummary.totalFiles} file(s).
+            <strong>Upload Complete!</strong> 
+            <span style={{ marginLeft: 'var(--spacing-sm)' }}>
+              <strong>Inserted:</strong> {uploadSummary.totalInserted || 0}
+              {' • '}
+              <strong>Skipped:</strong> {uploadSummary.totalSkipped || 0}
+              {uploadSummary.totalInvalid > 0 && (
+                <span style={{ marginLeft: 'var(--spacing-sm)', color: '#d32f2f' }}>
+                  (Invalid: {uploadSummary.totalInvalid}
+                </span>
+              )}
+              {uploadSummary.totalDuplicates > 0 && (
+                <span style={{ marginLeft: 'var(--spacing-xs)', color: '#ff9800' }}>
+                  {uploadSummary.totalInvalid > 0 ? ', ' : '('}Duplicates: {uploadSummary.totalDuplicates}
+                </span>
+              )}
+              {(uploadSummary.totalInvalid > 0 || uploadSummary.totalDuplicates > 0) && (
+                <span style={{ marginLeft: 'var(--spacing-xs)' }}>)</span>
+              )}
+            </span>
+            <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              across {uploadSummary.totalFiles} file(s)
+            </span>
             <button
               onClick={onNewUpload}
               className="btn btn-secondary"
@@ -136,10 +172,98 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
           )}
         </div>
 
-        <Filters filters={filters} onFiltersChange={setFilters} />
+        {/* Global Investigator Filters */}
+        <div className="investigator-filters" style={{
+          background: 'var(--bg-secondary)',
+          padding: 'var(--spacing-md)',
+          borderRadius: 'var(--radius-md)',
+          marginBottom: 'var(--spacing-lg)',
+          border: '1px solid var(--border-color)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: 'var(--spacing-sm)',
+            flexWrap: 'wrap',
+            gap: 'var(--spacing-sm)'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Investigator Filters</h3>
+            <button
+              onClick={() => setFilters({
+                startDate: '',
+                endDate: '',
+                number: '',
+                eventType: '',
+                direction: ''
+              })}
+              className="btn btn-secondary"
+              style={{ fontSize: '0.875rem', padding: '6px 12px' }}
+            >
+              Reset All Filters
+            </button>
+          </div>
+          <Filters filters={filters} onFiltersChange={setFilters} />
+        </div>
 
         {loading ? (
-          <div className="loading">Loading analytics...</div>
+          <div className="loading" style={{ 
+            padding: 'var(--spacing-xl)', 
+            textAlign: 'center',
+            color: 'var(--text-secondary)'
+          }}>
+            Loading analytics...
+          </div>
+        ) : error ? (
+          <div className="error-state" style={{
+            padding: 'var(--spacing-xl)',
+            textAlign: 'center',
+            background: 'var(--bg-secondary)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--error-color)'
+          }}>
+            <div style={{ fontSize: '2rem', marginBottom: 'var(--spacing-md)', color: 'var(--error-color)' }}>⚠️</div>
+            <h3 style={{ marginBottom: 'var(--spacing-sm)', color: 'var(--error-color)' }}>Error Loading Dashboard</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--spacing-md)' }}>
+              {error}
+            </p>
+            <button
+              onClick={fetchOverview}
+              className="btn btn-primary"
+            >
+              Retry
+            </button>
+          </div>
+        ) : overview && overview.totalEvents === 0 ? (
+          <div className="empty-state" style={{
+            padding: 'var(--spacing-xl)',
+            textAlign: 'center',
+            background: 'var(--bg-secondary)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ fontSize: '2rem', marginBottom: 'var(--spacing-md)' }}>📊</div>
+            <h3 style={{ marginBottom: 'var(--spacing-sm)' }}>No Events Found</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--spacing-md)' }}>
+              {filters.startDate || filters.endDate || filters.number || filters.eventType || filters.direction
+                ? 'No events match the selected filters. Try adjusting your filters or clearing them.'
+                : 'No events found for this upload. Please upload CDR files to begin analysis.'}
+            </p>
+            {(filters.startDate || filters.endDate || filters.number || filters.eventType || filters.direction) && (
+              <button
+                onClick={() => setFilters({
+                  startDate: '',
+                  endDate: '',
+                  number: '',
+                  eventType: '',
+                  direction: ''
+                })}
+                className="btn btn-primary"
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
         ) : (
           <>
             <SummaryCards overview={overview} />
@@ -148,11 +272,13 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
                 filters={filters} 
                 uploadId={currentUploadId || resolvedUploadId}
                 viewMode={viewMode}
+                overview={overview}
               />
               <TopContactsChart 
                 filters={filters} 
                 uploadId={currentUploadId || resolvedUploadId}
                 viewMode={viewMode}
+                overview={overview}
               />
             </div>
             <EventsTable 

@@ -4,7 +4,7 @@
  */
 
 // Known header synonyms mapping
-const HEADER_MAPPINGS = {
+export const HEADER_MAPPINGS = {
   startTime: ['Start Time', 'Date & Time', 'strt_tm', 'StartTime', 'timestamp', 'time', 'Start Date', 'Date'],
   endTime: ['End Time', 'end_tm', 'EndTime', 'End Date'],
   aParty: ['A Number', 'A-Party', 'msisdn', 'A Party', 'ANumber', 'A-Number', 'Calling Party'],

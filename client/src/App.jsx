@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Dashboard from './components/Dashboard';
+import Network from './components/Network';
 import { apiUrl } from './utils/api';
 import './styles/dashboard.css';
 
@@ -10,6 +12,11 @@ function App() {
   const [uploadSummary, setUploadSummary] = useState(null);
   const [currentUploadId, setCurrentUploadId] = useState(null);
   const [viewMode, setViewMode] = useState('current'); // 'current' | 'all'
+  const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Determine active view from URL
+  const activeView = location.pathname === '/network' ? 'network' : 'dashboard';
 
   // Verify saved uploadId exists in database on mount
   useEffect(() => {
@@ -63,25 +70,94 @@ function App() {
   const handleNewUpload = () => {
     setUploadComplete(false);
     setUploadSummary(null);
+    navigate('/');
     // Don't clear currentUploadId - keep it for reference
     // setCurrentUploadId(null);
     // localStorage.removeItem('currentUploadId');
   };
 
+  const handleViewChange = (view) => {
+    if (view === 'network') {
+      navigate('/network');
+    } else {
+      navigate('/');
+    }
+  };
+
   return (
     <div className="app">
       <Header />
-      {!uploadComplete ? (
-        <UploadSection onUploadComplete={handleUploadComplete} />
-      ) : (
-        <Dashboard 
-          uploadSummary={uploadSummary}
-          currentUploadId={currentUploadId}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          onNewUpload={handleNewUpload}
+      <Routes>
+        <Route 
+          path="/" 
+          element={
+            !uploadComplete ? (
+              <UploadSection onUploadComplete={handleUploadComplete} />
+            ) : (
+              <>
+                {/* Navigation Tabs */}
+                <div className="view-navigation">
+                  <div className="container">
+                    <Link
+                      to="/"
+                      className={`nav-tab ${activeView === 'dashboard' ? 'active' : ''}`}
+                    >
+                      Dashboard
+                    </Link>
+                    <Link
+                      to="/network"
+                      className={`nav-tab ${activeView === 'network' ? 'active' : ''}`}
+                    >
+                      Network
+                    </Link>
+                  </div>
+                </div>
+
+                <Dashboard 
+                  uploadSummary={uploadSummary}
+                  currentUploadId={currentUploadId}
+                  viewMode={viewMode}
+                  onViewModeChange={setViewMode}
+                  onNewUpload={handleNewUpload}
+                />
+              </>
+            )
+          } 
         />
-      )}
+        <Route 
+          path="/network" 
+          element={
+            !uploadComplete ? (
+              <UploadSection onUploadComplete={handleUploadComplete} />
+            ) : (
+              <>
+                {/* Navigation Tabs */}
+                <div className="view-navigation">
+                  <div className="container">
+                    <Link
+                      to="/"
+                      className={`nav-tab ${activeView === 'dashboard' ? 'active' : ''}`}
+                    >
+                      Dashboard
+                    </Link>
+                    <Link
+                      to="/network"
+                      className={`nav-tab ${activeView === 'network' ? 'active' : ''}`}
+                    >
+                      Network
+                    </Link>
+                  </div>
+                </div>
+
+                <Network 
+                  currentUploadId={currentUploadId}
+                  viewMode={viewMode}
+                />
+              </>
+            )
+          } 
+        />
+      </Routes>
     </div>
   );
 }

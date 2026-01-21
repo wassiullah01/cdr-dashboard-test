@@ -60,8 +60,8 @@ function UploadSection({ onUploadComplete }) {
 
       setUploadProgress('Processing files...');
 
-      // Step 2: Ingest files
-      const ingestResponse = await axios.post(apiUrl('/api/ingest'), {
+      // Step 2: Ingest files using canonical endpoint
+      const ingestResponse = await axios.post(apiUrl('/api/ingest/canonical'), {
         files: uploadResponse.data.files
       });
 
