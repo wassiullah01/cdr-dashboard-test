@@ -113,8 +113,8 @@ router.get('/', async (req, res) => {
       // Source information
       source: {
         fileName: event.source_file,
-        sheetName: null, // Not stored in canonical
-        rowNumber: null // Not stored in canonical
+        sheetName: event.source_sheet || null,
+        rowNumber: event.source_row_number || null
       },
       // Normalization warnings
       normalizationWarnings: event.normalizationWarnings || [],

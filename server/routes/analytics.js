@@ -225,9 +225,10 @@ router.get('/overview', async (req, res) => {
 
 // GET /api/analytics/timeline - Get timeline data (events per day/hour)
 // MIGRATED: Uses EventCanonical only - uses canonical "date" field for day grouping
+// Supports mode=stacked (default) and mode=baselineRecent for behavior change analysis
 router.get('/timeline', async (req, res) => {
   try {
-    const { startDate, endDate, number, eventType, groupBy = 'day' } = req.query;
+    const { startDate, endDate, number, eventType, groupBy = 'day', mode = 'stacked' } = req.query;
 
     // Resolve uploadId filter (string, not ObjectId)
     const uploadId = await resolveUploadId(req.query);
@@ -262,6 +263,151 @@ router.get('/timeline', async (req, res) => {
       }
     }
 
+    // BASELINE/RECENT MODE: Behavior change analysis
+    if (mode === 'baselineRecent') {
+      // Step 1: Determine time range from filtered dataset
+      const timeRange = await EventCanonical.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            minTime: { $min: '$timestamp_utc' },
+            maxTime: { $max: '$timestamp_utc' }
+          }
+        }
+      ]);
+
+      if (timeRange.length === 0 || !timeRange[0].minTime || !timeRange[0].maxTime) {
+        return res.json({
+          mode: 'baselineRecent',
+          error: 'No data available for baseline/recent analysis',
+          uploadId: uploadId || null
+        });
+      }
+
+      const minTime = new Date(timeRange[0].minTime);
+      const maxTime = new Date(timeRange[0].maxTime);
+      const timeSpan = maxTime.getTime() - minTime.getTime();
+      const timeSpanDays = timeSpan / (1000 * 60 * 60 * 24);
+
+      // Check if time span is sufficient (at least 2 days)
+      if (timeSpanDays < 2) {
+        return res.json({
+          mode: 'baselineRecent',
+          error: 'Not enough time span to compare baseline vs recent. Minimum 2 days required.',
+          timeSpanDays: timeSpanDays.toFixed(2),
+          uploadId: uploadId || null
+        });
+      }
+
+      // Calculate cutoff: earliest 70% = baseline, latest 30% = recent
+      const cutoff = new Date(minTime.getTime() + 0.7 * timeSpan);
+
+      // Step 2: Aggregate baseline and recent separately
+      const baselineFilter = { ...filter, timestamp_utc: { ...filter.timestamp_utc, $lte: cutoff } };
+      const recentFilter = { ...filter, timestamp_utc: { ...filter.timestamp_utc, $gt: cutoff } };
+
+      // Ensure timestamp_utc is an object for recent filter
+      if (!recentFilter.timestamp_utc || typeof recentFilter.timestamp_utc !== 'object') {
+        recentFilter.timestamp_utc = { $gt: cutoff };
+      } else {
+        recentFilter.timestamp_utc.$gt = cutoff;
+      }
+
+      // Aggregate baseline series (by day)
+      const baselineSeries = await EventCanonical.aggregate([
+        { $match: baselineFilter },
+        {
+          $group: {
+            _id: '$date',
+            total: { $sum: 1 },
+            calls: { $sum: { $cond: [{ $eq: ['$event_type', 'call'] }, 1, 0] } },
+            sms: { $sum: { $cond: [{ $eq: ['$event_type', 'sms'] }, 1, 0] } }
+          }
+        },
+        { $sort: { _id: 1 } },
+        {
+          $project: {
+            date: '$_id',
+            total: 1,
+            calls: 1,
+            sms: 1,
+            _id: 0
+          }
+        }
+      ]);
+
+      // Aggregate recent series (by day)
+      const recentSeries = await EventCanonical.aggregate([
+        { $match: recentFilter },
+        {
+          $group: {
+            _id: '$date',
+            total: { $sum: 1 },
+            calls: { $sum: { $cond: [{ $eq: ['$event_type', 'call'] }, 1, 0] } },
+            sms: { $sum: { $cond: [{ $eq: ['$event_type', 'sms'] }, 1, 0] } }
+          }
+        },
+        { $sort: { _id: 1 } },
+        {
+          $project: {
+            date: '$_id',
+            total: 1,
+            calls: 1,
+            sms: 1,
+            _id: 0
+          }
+        }
+      ]);
+
+      // Step 3: Calculate deltas and metrics
+      const baselineTotal = baselineSeries.reduce((sum, day) => sum + day.total, 0);
+      const recentTotal = recentSeries.reduce((sum, day) => sum + day.total, 0);
+      const baselineCalls = baselineSeries.reduce((sum, day) => sum + day.calls, 0);
+      const recentCalls = recentSeries.reduce((sum, day) => sum + day.calls, 0);
+      const baselineSms = baselineSeries.reduce((sum, day) => sum + day.sms, 0);
+      const recentSms = recentSeries.reduce((sum, day) => sum + day.sms, 0);
+
+      const baselineDays = baselineSeries.length || 1;
+      const recentDays = recentSeries.length || 1;
+
+      const avgDailyTotalBaseline = baselineTotal / baselineDays;
+      const avgDailyTotalRecent = recentTotal / recentDays;
+      const pctChangeTotal = avgDailyTotalBaseline > 0 
+        ? ((avgDailyTotalRecent - avgDailyTotalBaseline) / avgDailyTotalBaseline * 100).toFixed(1)
+        : recentTotal > 0 ? 100 : 0;
+      const pctChangeCalls = baselineCalls > 0
+        ? ((recentCalls - baselineCalls) / baselineCalls * 100).toFixed(1)
+        : recentCalls > 0 ? 100 : 0;
+      const pctChangeSms = baselineSms > 0
+        ? ((recentSms - baselineSms) / baselineSms * 100).toFixed(1)
+        : recentSms > 0 ? 100 : 0;
+
+      // Calculate night activity percentages using canonical is_night field
+      const baselineNight = await EventCanonical.countDocuments({ ...baselineFilter, is_night: true });
+      const recentNight = await EventCanonical.countDocuments({ ...recentFilter, is_night: true });
+      const nightActivityBaselinePct = baselineTotal > 0 ? ((baselineNight / baselineTotal) * 100).toFixed(1) : 0;
+      const nightActivityRecentPct = recentTotal > 0 ? ((recentNight / recentTotal) * 100).toFixed(1) : 0;
+
+      return res.json({
+        mode: 'baselineRecent',
+        cutoffUtc: cutoff.toISOString(),
+        baseline: baselineSeries,
+        recent: recentSeries,
+        deltas: {
+          avgDailyTotalBaseline: avgDailyTotalBaseline.toFixed(1),
+          avgDailyTotalRecent: avgDailyTotalRecent.toFixed(1),
+          pctChangeTotal: parseFloat(pctChangeTotal),
+          pctChangeCalls: parseFloat(pctChangeCalls),
+          pctChangeSms: parseFloat(pctChangeSms),
+          nightActivityBaselinePct: parseFloat(nightActivityBaselinePct),
+          nightActivityRecentPct: parseFloat(nightActivityRecentPct)
+        },
+        uploadId: uploadId || null
+      });
+    }
+
+    // DEFAULT MODE: Stacked timeline (existing behavior)
     // Use canonical "date" field (YYYY-MM-DD) for day grouping, timestamp_utc for hour grouping
     const groupFormat = groupBy === 'hour'
       ? { $dateToString: { format: '%Y-%m-%d %H:00', date: '$timestamp_utc' } }
@@ -291,6 +437,7 @@ router.get('/timeline', async (req, res) => {
     ]);
 
     res.json({ 
+      mode: 'stacked',
       timeline,
       uploadId: uploadId || null // Return resolved uploadId
     });
@@ -831,5 +978,972 @@ router.get('/network', async (req, res) => {
     res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
+
+// Simple in-memory cache for anomaly results
+const anomalyCache = new Map();
+const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const MAX_CACHE_SIZE = 50; // Maximum cache entries
+
+// Cache entry structure: { data, timestamp }
+function getCacheKey(uploadId, from, to, eventType, baselineRatio, phone) {
+  return `${uploadId}|${from || ''}|${to || ''}|${eventType || 'all'}|${baselineRatio}|${phone || ''}`;
+}
+
+function getCached(key) {
+  const entry = anomalyCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    anomalyCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data) {
+  // Implement simple LRU: remove oldest if at capacity
+  if (anomalyCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = anomalyCache.keys().next().value;
+    anomalyCache.delete(firstKey);
+  }
+  anomalyCache.set(key, { data, timestamp: Date.now() });
+}
+
+// Helper: Generate deterministic alert ID
+function generateAlertId(type, phone, related, cutoffUtc, metricsBucket) {
+  const hashInput = `${type}|${phone}|${related || ''}|${cutoffUtc}|${JSON.stringify(metricsBucket)}`;
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < hashInput.length; i++) {
+    const char = hashInput.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return `alert_${Math.abs(hash).toString(36)}`;
+}
+
+// Helper: Calculate confidence based on baseline sample size
+function calculateConfidence(baselineDaysCount, baselineSampleSize) {
+  if (baselineDaysCount >= 14 && baselineSampleSize >= 100) return 'high';
+  if (baselineDaysCount >= 7 && baselineSampleSize >= 50) return 'medium';
+  return 'low';
+}
+
+// GET /api/analytics/anomalies - Detect anomalies using baseline vs recent comparison
+router.get('/anomalies', async (req, res) => {
+  try {
+    const { uploadId, from, to, eventType = 'all', baselineRatio = 0.7, limit = 50, phone } = req.query;
+
+    // Validation
+    if (!uploadId) {
+      return res.status(400).json({ error: 'uploadId is required' });
+    }
+
+    const baselineRatioNum = parseFloat(baselineRatio);
+    if (isNaN(baselineRatioNum) || baselineRatioNum < 0.5 || baselineRatioNum > 0.9) {
+      return res.status(422).json({ error: 'baselineRatio must be between 0.5 and 0.9' });
+    }
+
+    // Check cache
+    const cacheKey = getCacheKey(uploadId, from, to, eventType, baselineRatioNum, phone);
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // Build base filter
+    const baseFilter = { uploadId };
+    if (from || to) {
+      baseFilter.timestamp_utc = {};
+      if (from) baseFilter.timestamp_utc.$gte = new Date(from);
+      if (to) baseFilter.timestamp_utc.$lte = new Date(to);
+    }
+
+    // Event type filter
+    if (eventType !== 'all') {
+      if (eventType === 'call') {
+        baseFilter.event_type = 'call';
+      } else if (eventType === 'sms') {
+        baseFilter.event_type = 'sms';
+      }
+    }
+
+    // Phone filter (if provided, compute anomalies only for that phone)
+    if (phone) {
+      baseFilter.$or = [
+        { caller_number: phone },
+        { receiver_number: phone }
+      ];
+    }
+
+    // Step 1: Determine time range and cutoff
+    const timeRange = await EventCanonical.aggregate([
+      { $match: baseFilter },
+      {
+        $group: {
+          _id: null,
+          minTime: { $min: '$timestamp_utc' },
+          maxTime: { $max: '$timestamp_utc' }
+        }
+      }
+    ]);
+
+    if (timeRange.length === 0 || !timeRange[0].minTime || !timeRange[0].maxTime) {
+      return res.json({
+        uploadId,
+        filters: { from, to, eventType, baselineRatio: baselineRatioNum, phone },
+        baseline: { startUtc: null, endUtc: null, daysCount: 0, cutoffUtc: null },
+        recent: { startUtc: null, endUtc: null, daysCount: 0 },
+        summary: { totalAlerts: 0, high: 0, medium: 0, low: 0 },
+        alerts: []
+      });
+    }
+
+    const minTime = new Date(timeRange[0].minTime);
+    const maxTime = new Date(timeRange[0].maxTime);
+    const timeSpan = maxTime.getTime() - minTime.getTime();
+    const cutoffTime = new Date(minTime.getTime() + baselineRatioNum * timeSpan);
+
+    // Build baseline and recent filters
+    const baselineFilter = {
+      ...baseFilter,
+      timestamp_utc: { ...baseFilter.timestamp_utc, $lte: cutoffTime }
+    };
+    if (!baselineFilter.timestamp_utc.$gte) {
+      baselineFilter.timestamp_utc.$gte = minTime;
+    }
+
+    const recentFilter = {
+      ...baseFilter,
+      timestamp_utc: { ...baseFilter.timestamp_utc, $gt: cutoffTime }
+    };
+    if (!recentFilter.timestamp_utc.$lte) {
+      recentFilter.timestamp_utc.$lte = maxTime;
+    }
+
+    // Calculate baseline and recent day counts
+    const baselineDays = await EventCanonical.distinct('date', baselineFilter);
+    const recentDays = await EventCanonical.distinct('date', recentFilter);
+    const baselineDaysCount = baselineDays.length;
+    const recentDaysCount = recentDays.length;
+
+    // Step 2: Compute anomalies
+    const alerts = [];
+
+    // ANOMALY 1: VOLUME_SPIKE
+    const volumeSpikeAlerts = await computeVolumeSpike(
+      baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phone
+    );
+    alerts.push(...volumeSpikeAlerts);
+
+    // ANOMALY 2: NEW_CONTACT_EMERGENCE
+    const newContactAlerts = await computeNewContactEmergence(
+      baselineFilter, recentFilter, phone
+    );
+    alerts.push(...newContactAlerts);
+
+    // ANOMALY 3: NIGHT_ACTIVITY_SHIFT
+    const nightActivityAlerts = await computeNightActivityShift(
+      baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phone
+    );
+    alerts.push(...nightActivityAlerts);
+
+    // ANOMALY 4: BURST_PATTERN_CHANGE
+    const burstPatternAlerts = await computeBurstPatternChange(
+      baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phone
+    );
+    alerts.push(...burstPatternAlerts);
+
+    // Sort alerts: severity desc, then by score/type
+    alerts.sort((a, b) => {
+      const severityOrder = { high: 3, medium: 2, low: 1 };
+      if (severityOrder[b.severity] !== severityOrder[a.severity]) {
+        return severityOrder[b.severity] - severityOrder[a.severity];
+      }
+      return (b.metrics?.multiplier || b.metrics?.deltaPoints || 0) - (a.metrics?.multiplier || a.metrics?.deltaPoints || 0);
+    });
+
+    // Limit results
+    const limitedAlerts = alerts.slice(0, parseInt(limit) || 50);
+
+    // Calculate summary
+    const summary = {
+      totalAlerts: limitedAlerts.length,
+      high: limitedAlerts.filter(a => a.severity === 'high').length,
+      medium: limitedAlerts.filter(a => a.severity === 'medium').length,
+      low: limitedAlerts.filter(a => a.severity === 'low').length
+    };
+
+    const result = {
+      uploadId,
+      filters: { from, to, eventType, baselineRatio: baselineRatioNum, phone },
+      baseline: {
+        startUtc: minTime.toISOString(),
+        endUtc: cutoffTime.toISOString(),
+        daysCount: baselineDaysCount,
+        cutoffUtc: cutoffTime.toISOString()
+      },
+      recent: {
+        startUtc: cutoffTime.toISOString(),
+        endUtc: maxTime.toISOString(),
+        daysCount: recentDaysCount
+      },
+      summary,
+      alerts: limitedAlerts
+    };
+
+    // Cache result
+    setCache(cacheKey, result);
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('Anomalies computation error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ANOMALY 1: VOLUME_SPIKE
+async function computeVolumeSpike(baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phoneFilter) {
+  const alerts = [];
+
+  // Aggregate daily volumes per phone
+  // Count events where phone is caller OR receiver
+  const baselineDaily = await EventCanonical.aggregate([
+    { $match: baselineFilter },
+    {
+      $project: {
+        date: 1,
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    {
+      $group: {
+        _id: { phone: '$phoneTrim', date: '$date' },
+        count: { $sum: 1 }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { '_id.phone': String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$_id.phone',
+        avgDaily: { $avg: '$count' },
+        totalEvents: { $sum: '$count' },
+        daysCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const recentDaily = await EventCanonical.aggregate([
+    { $match: recentFilter },
+    {
+      $project: {
+        date: 1,
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    {
+      $group: {
+        _id: { phone: '$phoneTrim', date: '$date' },
+        count: { $sum: 1 }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { '_id.phone': String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$_id.phone',
+        avgDaily: { $avg: '$count' },
+        totalEvents: { $sum: '$count' },
+        daysCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Match phones and compute spikes
+  const phoneMap = new Map();
+  baselineDaily.forEach(p => phoneMap.set(p._id, { baseline: p }));
+  recentDaily.forEach(p => {
+    if (!phoneMap.has(p._id)) phoneMap.set(p._id, {});
+    phoneMap.get(p._id).recent = p;
+  });
+
+  for (const [phone, data] of phoneMap.entries()) {
+    if (!data.baseline || !data.recent || !phone) continue;
+
+    const baselineAvg = data.baseline.avgDaily;
+    const recentAvg = data.recent.avgDaily;
+
+    if (baselineAvg < 1) continue; // Avoid noise
+
+    const multiplier = recentAvg / baselineAvg;
+    if (multiplier >= 2.5) {
+      const deltaPct = ((recentAvg - baselineAvg) / baselineAvg * 100).toFixed(1);
+      let severity = 'low';
+      if (multiplier >= 3.5) severity = 'high';
+      else if (multiplier >= 2.8) severity = 'medium';
+
+      const confidence = calculateConfidence(baselineDaysCount, data.baseline.totalEvents);
+
+      alerts.push({
+        id: generateAlertId('VOLUME_SPIKE', phone, null, recentFilter.timestamp_utc.$lte, { multiplier: Math.floor(multiplier * 10) }),
+        type: 'VOLUME_SPIKE',
+        severity,
+        confidence,
+        phone,
+        related: {},
+        window: {
+          baseline: { avgDaily: baselineAvg.toFixed(1), totalEvents: data.baseline.totalEvents, daysCount: data.baseline.daysCount },
+          recent: { avgDaily: recentAvg.toFixed(1), totalEvents: data.recent.totalEvents, daysCount: data.recent.daysCount }
+        },
+        metrics: {
+          baselineAvgDaily: baselineAvg.toFixed(1),
+          recentAvgDaily: recentAvg.toFixed(1),
+          multiplier: multiplier.toFixed(2),
+          deltaPct: parseFloat(deltaPct),
+          baselineDaysCount: data.baseline.daysCount,
+          recentDaysCount: data.recent.daysCount
+        },
+        explanation: `Daily communication volume increased ${multiplier.toFixed(1)}× from ${baselineAvg.toFixed(1)} to ${recentAvg.toFixed(1)} events/day (${deltaPct}% increase)`,
+        recommendedActions: ['VIEW_EVENTS', 'VIEW_NETWORK', 'VIEW_TIMELINE']
+      });
+    }
+  }
+
+  return alerts;
+}
+
+// ANOMALY 2: NEW_CONTACT_EMERGENCE
+async function computeNewContactEmergence(baselineFilter, recentFilter, phoneFilter) {
+  const alerts = [];
+
+  // Get all owner phones to analyze (from both caller and receiver in baseline+recent)
+  let phonesToAnalyze;
+  if (phoneFilter) {
+    phonesToAnalyze = [phoneFilter];
+  } else {
+    // Get distinct phones from both caller_number and receiver_number in the combined dataset
+    const [baselineCallers, baselineReceivers, recentCallers, recentReceivers] = await Promise.all([
+      EventCanonical.distinct('caller_number', { ...baselineFilter, caller_number: { $exists: true, $nin: [null, ''] } }),
+      EventCanonical.distinct('receiver_number', { ...baselineFilter, receiver_number: { $exists: true, $nin: [null, ''] } }),
+      EventCanonical.distinct('caller_number', { ...recentFilter, caller_number: { $exists: true, $nin: [null, ''] } }),
+      EventCanonical.distinct('receiver_number', { ...recentFilter, receiver_number: { $exists: true, $nin: [null, ''] } })
+    ]);
+    const allPhones = new Set([...baselineCallers, ...baselineReceivers, ...recentCallers, ...recentReceivers]);
+    // Filter out empty strings and whitespace-only
+    phonesToAnalyze = Array.from(allPhones).filter(p => p && String(p).trim().length > 0);
+  }
+
+  // Use aggregation to compute baseline counterparties (bidirectional) for all owners at once
+  const baselineCounterpartiesMap = await EventCanonical.aggregate([
+    { $match: baselineFilter },
+    {
+      $project: {
+        caller: { $ifNull: ['$caller_number', ''] },
+        receiver: { $ifNull: ['$receiver_number', ''] }
+      }
+    },
+    {
+      $match: {
+        caller: { $nin: [null, ''] },
+        receiver: { $nin: [null, ''] }
+      }
+    },
+    {
+      $addFields: {
+        callerTrim: { $trim: { input: { $toString: '$caller' } } },
+        receiverTrim: { $trim: { input: { $toString: '$receiver' } } }
+      }
+    },
+    {
+      $match: {
+        callerTrim: { $ne: '' },
+        receiverTrim: { $ne: '' }
+      }
+    },
+    {
+      $facet: {
+        ownerAsCaller: [
+          {
+            $project: {
+              owner: '$callerTrim',
+              counterparty: '$receiverTrim'
+            }
+          }
+        ],
+        ownerAsReceiver: [
+          {
+            $project: {
+              owner: '$receiverTrim',
+              counterparty: '$callerTrim'
+            }
+          }
+        ]
+      }
+    },
+    {
+      $project: {
+        pairs: { $concatArrays: ['$ownerAsCaller', '$ownerAsReceiver'] }
+      }
+    },
+    { $unwind: '$pairs' },
+    {
+      $group: {
+        _id: { owner: '$pairs.owner', counterparty: '$pairs.counterparty' }
+      }
+    },
+    {
+      $group: {
+        _id: '$_id.owner',
+        counterparties: { $addToSet: '$_id.counterparty' }
+      }
+    }
+  ]);
+
+  // Build baseline counterparties map
+  const baselineMap = new Map();
+  baselineCounterpartiesMap.forEach(item => {
+    if (item._id) {
+      baselineMap.set(item._id, new Set(item.counterparties));
+    }
+  });
+
+  // For each owner, find new counterparties in recent period (bidirectional)
+  for (const ownerPhone of phonesToAnalyze) {
+    if (!ownerPhone || String(ownerPhone).trim().length === 0) continue;
+
+    const ownerTrim = String(ownerPhone).trim();
+    const baselineCounterparties = baselineMap.get(ownerTrim) || new Set();
+
+    // Get recent counterparties and their bidirectional event counts
+    const recentCounterparties = await EventCanonical.aggregate([
+      {
+        $match: {
+          ...recentFilter,
+          $or: [
+            { caller_number: ownerTrim },
+            { receiver_number: ownerTrim }
+          ]
+        }
+      },
+      {
+        $project: {
+          counterparty: {
+            $cond: [
+              { $eq: ['$caller_number', ownerTrim] },
+              '$receiver_number',
+              '$caller_number'
+            ]
+          },
+          timestamp_utc: 1
+        }
+      },
+      {
+        $match: {
+          counterparty: { $exists: true, $nin: [null, ''] },
+          $expr: {
+            $and: [
+              { $ne: [{ $trim: { input: { $toString: '$counterparty' } } }, ''] }
+            ]
+          }
+        }
+      },
+      {
+        $addFields: {
+          counterpartyTrim: { $trim: { input: { $toString: '$counterparty' } } }
+        }
+      },
+      {
+        $match: {
+          counterpartyTrim: { $ne: '' },
+          counterpartyTrim: { $nin: Array.from(baselineCounterparties).map(c => String(c).trim()) }
+        }
+      },
+      {
+        $group: {
+          _id: '$counterpartyTrim',
+          eventCount: { $sum: 1 },
+          firstSeen: { $min: '$timestamp_utc' }
+        }
+      }
+    ]);
+
+    // Get total recent events for owner phone (bidirectional)
+    const totalRecentEvents = await EventCanonical.countDocuments({
+      ...recentFilter,
+      $or: [
+        { caller_number: ownerTrim },
+        { receiver_number: ownerTrim }
+      ]
+    });
+
+    for (const contact of recentCounterparties) {
+      const newContactPhone = contact._id;
+      const recentEventCount = contact.eventCount;
+      const sharePct = totalRecentEvents > 0 ? (recentEventCount / totalRecentEvents) : 0;
+
+      if (recentEventCount >= 5 || sharePct >= 0.20) {
+        let severity = 'low';
+        if (sharePct >= 0.35 || recentEventCount >= 15) severity = 'high';
+        else if (sharePct >= 0.25 || recentEventCount >= 10) severity = 'medium';
+
+        alerts.push({
+          id: generateAlertId('NEW_CONTACT_EMERGENCE', ownerTrim, newContactPhone, recentFilter.timestamp_utc.$lte, { eventCount: recentEventCount }),
+          type: 'NEW_CONTACT_EMERGENCE',
+          severity,
+          confidence: 'medium', // New contacts inherently have less baseline data
+          phone: ownerTrim,
+          related: { otherPhone: newContactPhone },
+          window: {
+            baseline: { contactsSeen: baselineCounterparties.size },
+            recent: { newContactPhone, recentEventCount, sharePct: (sharePct * 100).toFixed(1) + '%' }
+          },
+          metrics: {
+            newContactPhone,
+            recentEventCount,
+            sharePct: (sharePct * 100).toFixed(1),
+            firstSeenRecent: contact.firstSeen.toISOString()
+          },
+          explanation: `New contact ${newContactPhone} emerged with ${recentEventCount} events (${(sharePct * 100).toFixed(1)}% of recent activity)`,
+          recommendedActions: ['VIEW_EVENTS', 'VIEW_NETWORK', 'VIEW_TIMELINE']
+        });
+      }
+    }
+  }
+
+  return alerts;
+}
+
+// ANOMALY 3: NIGHT_ACTIVITY_SHIFT
+async function computeNightActivityShift(baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phoneFilter) {
+  const alerts = [];
+
+  // Aggregate night activity per phone
+  const baselineNight = await EventCanonical.aggregate([
+    { $match: { ...baselineFilter, is_night: true } },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$phoneTrim',
+        nightCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const baselineTotal = await EventCanonical.aggregate([
+    { $match: baselineFilter },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$phoneTrim',
+        totalCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const recentNight = await EventCanonical.aggregate([
+    { $match: { ...recentFilter, is_night: true } },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$phoneTrim',
+        nightCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const recentTotal = await EventCanonical.aggregate([
+    { $match: recentFilter },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: '$phoneTrim',
+        totalCount: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const phoneMap = new Map();
+  baselineTotal.forEach(p => {
+    if (!p._id) return;
+    phoneMap.set(p._id, { baselineTotal: p.totalCount, baselineNight: 0 });
+  });
+  baselineNight.forEach(p => {
+    if (phoneMap.has(p._id)) phoneMap.get(p._id).baselineNight = p.nightCount;
+  });
+  recentTotal.forEach(p => {
+    if (!p._id) return;
+    if (!phoneMap.has(p._id)) phoneMap.set(p._id, { baselineTotal: 0, baselineNight: 0 });
+    phoneMap.get(p._id).recentTotal = p.totalCount;
+    phoneMap.get(p._id).recentNight = 0;
+  });
+  recentNight.forEach(p => {
+    if (phoneMap.has(p._id)) phoneMap.get(p._id).recentNight = p.nightCount;
+  });
+
+  for (const [phone, data] of phoneMap.entries()) {
+    if (!data.baselineTotal || !data.recentTotal) continue;
+
+    const baselineNightPct = (data.baselineNight / data.baselineTotal) * 100;
+    const recentNightPct = (data.recentNight / data.recentTotal) * 100;
+    const deltaPoints = recentNightPct - baselineNightPct;
+
+    if (deltaPoints >= 18) {
+      let severity = 'low';
+      if (deltaPoints >= 30) severity = 'high';
+      else if (deltaPoints >= 22) severity = 'medium';
+
+      const confidence = calculateConfidence(baselineDaysCount, data.baselineTotal);
+
+      alerts.push({
+        id: generateAlertId('NIGHT_ACTIVITY_SHIFT', phone, null, recentFilter.timestamp_utc.$lte, { deltaPoints: Math.floor(deltaPoints) }),
+        type: 'NIGHT_ACTIVITY_SHIFT',
+        severity,
+        confidence,
+        phone,
+        related: {},
+        window: {
+          baseline: { nightPct: baselineNightPct.toFixed(1) + '%', nightCount: data.baselineNight, totalCount: data.baselineTotal },
+          recent: { nightPct: recentNightPct.toFixed(1) + '%', nightCount: data.recentNight, totalCount: data.recentTotal }
+        },
+        metrics: {
+          baselineNightPct: baselineNightPct.toFixed(1),
+          recentNightPct: recentNightPct.toFixed(1),
+          deltaPoints: deltaPoints.toFixed(1)
+        },
+        explanation: `Night activity increased from ${baselineNightPct.toFixed(1)}% to ${recentNightPct.toFixed(1)}% (+${deltaPoints.toFixed(1)} points)`,
+        recommendedActions: ['VIEW_EVENTS', 'VIEW_NETWORK', 'VIEW_TIMELINE']
+      });
+    }
+  }
+
+  return alerts;
+}
+
+// ANOMALY 4: BURST_PATTERN_CHANGE
+async function computeBurstPatternChange(baselineFilter, recentFilter, baselineDaysCount, recentDaysCount, phoneFilter) {
+  const alerts = [];
+
+  // Aggregate burst sizes per phone per burst_session_id
+  const baselineBursts = await EventCanonical.aggregate([
+    { $match: { ...baselineFilter, burst_session_id: { $exists: true, $ne: null } } },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        },
+        burstId: '$burst_session_id'
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: { phone: '$phoneTrim', burstId: '$burstId' },
+        burstSize: { $sum: 1 }
+      }
+    },
+    {
+      $group: {
+        _id: '$_id.phone',
+        avgBurstSize: { $avg: '$burstSize' },
+        burstCount: { $sum: 1 },
+        maxBurstSize: { $max: '$burstSize' }
+      }
+    }
+  ]);
+
+  const recentBursts = await EventCanonical.aggregate([
+    { $match: { ...recentFilter, burst_session_id: { $exists: true, $ne: null } } },
+    {
+      $project: {
+        phones: {
+          $filter: {
+            input: ['$caller_number', '$receiver_number'],
+            as: 'p',
+            cond: {
+              $and: [
+                { $ne: ['$$p', null] },
+                { $ne: ['$$p', ''] },
+                { $ne: [{ $trim: { input: { $ifNull: ['$$p', ''] } } }, ''] }
+              ]
+            }
+          }
+        },
+        burstId: '$burst_session_id'
+      }
+    },
+    { $unwind: '$phones' },
+    {
+      $addFields: {
+        phoneTrim: { $trim: { input: { $toString: '$phones' } } }
+      }
+    },
+    {
+      $match: {
+        phoneTrim: { $ne: '' }
+      }
+    },
+    ...(phoneFilter ? [{ $match: { phoneTrim: String(phoneFilter).trim() } }] : []),
+    {
+      $group: {
+        _id: { phone: '$phoneTrim', burstId: '$burstId' },
+        burstSize: { $sum: 1 }
+      }
+    },
+    {
+      $group: {
+        _id: '$_id.phone',
+        avgBurstSize: { $avg: '$burstSize' },
+        burstCount: { $sum: 1 },
+        maxBurstSize: { $max: '$burstSize' }
+      }
+    }
+  ]);
+
+  const phoneMap = new Map();
+  baselineBursts.forEach(p => {
+    if (!p._id) return;
+    phoneMap.set(p._id, { baseline: p, baselineBurstRate: p.burstCount / baselineDaysCount });
+  });
+  recentBursts.forEach(p => {
+    if (!p._id) return;
+    if (!phoneMap.has(p._id)) phoneMap.set(p._id, { baseline: null, baselineBurstRate: 0 });
+    phoneMap.get(p._id).recent = p;
+    phoneMap.get(p._id).recentBurstRate = p.burstCount / recentDaysCount;
+  });
+
+  for (const [phone, data] of phoneMap.entries()) {
+    if (!data.baseline || !data.recent) continue;
+
+    const baselineAvgBurstSize = data.baseline.avgBurstSize;
+    const recentAvgBurstSize = data.recent.avgBurstSize;
+    const baselineBurstRate = data.baselineBurstRate;
+    const recentBurstRate = data.recentBurstRate;
+
+    const sizeMultiplier = recentAvgBurstSize / baselineAvgBurstSize;
+    const rateMultiplier = baselineBurstRate > 0 ? recentBurstRate / baselineBurstRate : 0;
+
+    if (sizeMultiplier >= 2.0 || rateMultiplier >= 2.5) {
+      const maxMultiplier = Math.max(sizeMultiplier, rateMultiplier);
+      let severity = 'low';
+      if (maxMultiplier >= 3.0) severity = 'high';
+      else if (maxMultiplier >= 2.5) severity = 'medium';
+
+      const confidence = calculateConfidence(baselineDaysCount, data.baseline.burstCount);
+
+      alerts.push({
+        id: generateAlertId('BURST_PATTERN_CHANGE', phone, null, recentFilter.timestamp_utc.$lte, { multiplier: Math.floor(maxMultiplier * 10) }),
+        type: 'BURST_PATTERN_CHANGE',
+        severity,
+        confidence,
+        phone,
+        related: {},
+        window: {
+          baseline: {
+            avgBurstSize: baselineAvgBurstSize.toFixed(1),
+            burstRate: baselineBurstRate.toFixed(2) + '/day',
+            burstCount: data.baseline.burstCount
+          },
+          recent: {
+            avgBurstSize: recentAvgBurstSize.toFixed(1),
+            burstRate: recentBurstRate.toFixed(2) + '/day',
+            burstCount: data.recent.burstCount,
+            maxBurstSize: data.recent.maxBurstSize
+          }
+        },
+        metrics: {
+          baselineAvgBurstSize: baselineAvgBurstSize.toFixed(1),
+          recentAvgBurstSize: recentAvgBurstSize.toFixed(1),
+          baselineBurstRate: baselineBurstRate.toFixed(2),
+          recentBurstRate: recentBurstRate.toFixed(2),
+          topRecentBurstSize: data.recent.maxBurstSize,
+          sizeMultiplier: sizeMultiplier.toFixed(2),
+          rateMultiplier: rateMultiplier.toFixed(2)
+        },
+        explanation: `Burst pattern changed: size ${sizeMultiplier.toFixed(1)}× (${baselineAvgBurstSize.toFixed(1)} → ${recentAvgBurstSize.toFixed(1)} events/burst) or rate ${rateMultiplier.toFixed(1)}× (${baselineBurstRate.toFixed(2)} → ${recentBurstRate.toFixed(2)} bursts/day)`,
+        recommendedActions: ['VIEW_EVENTS', 'VIEW_NETWORK', 'VIEW_TIMELINE']
+      });
+    }
+  }
+
+  return alerts;
+}
 
 export default router;

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Filters from './Filters';
 import SummaryCards from './SummaryCards';
 import TimelineChart from './TimelineChart';
@@ -8,6 +9,10 @@ import { apiUrl } from '../utils/api';
 import '../styles/dashboard.css';
 
 function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange, onNewUpload }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const appliedNavRef = useRef(false);
+  
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -16,10 +21,35 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
     direction: ''
     // NOTE: uploadId is NOT stored in filters - it's passed explicitly from props
   });
+
+  // Apply navigation state filters reliably and clear router state correctly
+  useEffect(() => {
+    const s = location.state;
+    const hasNav = !!(s && (s.filterPhone || s.filterFrom || s.filterTo));
+    if (!hasNav) {
+      appliedNavRef.current = false; // Reset when no nav state
+      return;
+    }
+
+    // Apply once per navigation state change
+    if (!appliedNavRef.current) {
+      setFilters(prev => ({
+        ...prev,
+        number: s.filterPhone || prev.number,
+        startDate: s.filterFrom || prev.startDate,
+        endDate: s.filterTo || prev.endDate,
+      }));
+      appliedNavRef.current = true;
+    }
+
+    // Clear router state (replace navigation)
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [resolvedUploadId, setResolvedUploadId] = useState(currentUploadId); // Track resolved ID from API
+  const [alertsSummary, setAlertsSummary] = useState(null);
 
   // Update resolvedUploadId when currentUploadId prop changes
   useEffect(() => {
@@ -84,6 +114,39 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
   useEffect(() => {
     fetchOverview();
   }, [fetchOverview]);
+
+  // Fetch alerts summary
+  const fetchAlertsSummary = useCallback(async () => {
+    if (!currentUploadId && viewMode === 'current') return;
+    
+    try {
+      const params = new URLSearchParams();
+      if (viewMode === 'all') {
+        params.append('includeAll', 'true');
+      } else {
+        const activeUploadId = currentUploadId || resolvedUploadId;
+        if (activeUploadId) {
+          params.append('uploadId', activeUploadId);
+        }
+      }
+      params.append('eventType', 'all');
+      params.append('baselineRatio', '0.7');
+      params.append('limit', '1'); // Just need summary
+
+      const response = await fetch(apiUrl(`/api/analytics/anomalies?${params}`));
+      if (response.ok) {
+        const data = await response.json();
+        setAlertsSummary(data.summary);
+      }
+    } catch (err) {
+      // Silently fail - alerts summary is optional
+      console.warn('Failed to fetch alerts summary:', err);
+    }
+  }, [currentUploadId, resolvedUploadId, viewMode]);
+
+  useEffect(() => {
+    fetchAlertsSummary();
+  }, [fetchAlertsSummary]);
 
   const handleViewModeChange = (newMode) => {
     onViewModeChange(newMode);
@@ -267,6 +330,82 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
         ) : (
           <>
             <SummaryCards overview={overview} />
+            
+            {/* Alerts Summary Widget */}
+            {alertsSummary && (
+              <div style={{
+                marginTop: 'var(--spacing-md)',
+                marginBottom: 'var(--spacing-md)',
+                padding: 'var(--spacing-md)',
+                background: 'white',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--spacing-md)',
+                flexWrap: 'wrap'
+              }}>
+                <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>Anomaly Alerts:</div>
+                <Link
+                  to="/alerts"
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: '#fee2e2',
+                    color: '#991b1b',
+                    border: '1px solid #ef4444',
+                    textDecoration: 'none'
+                  }}
+                >
+                  High: {alertsSummary.high}
+                </Link>
+                <Link
+                  to="/alerts"
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: '#fef3c7',
+                    color: '#92400e',
+                    border: '1px solid #f59e0b',
+                    textDecoration: 'none'
+                  }}
+                >
+                  Medium: {alertsSummary.medium}
+                </Link>
+                <Link
+                  to="/alerts"
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: '#dbeafe',
+                    color: '#1e40af',
+                    border: '1px solid #3b82f6',
+                    textDecoration: 'none'
+                  }}
+                >
+                  Low: {alertsSummary.low}
+                </Link>
+                <Link
+                  to="/alerts"
+                  style={{
+                    marginLeft: 'auto',
+                    fontSize: '0.875rem',
+                    color: 'var(--primary-color)',
+                    textDecoration: 'none',
+                    fontWeight: 500
+                  }}
+                >
+                  View All Alerts →
+                </Link>
+              </div>
+            )}
+
             <div className="grid grid-2">
               <TimelineChart 
                 filters={filters} 
@@ -285,6 +424,7 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
               filters={filters} 
               uploadId={currentUploadId || resolvedUploadId}
               viewMode={viewMode}
+              uploadSummary={uploadSummary}
             />
           </>
         )}

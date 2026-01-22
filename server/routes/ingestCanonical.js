@@ -92,7 +92,6 @@ router.post('/canonical', async (req, res) => {
     
     // Insert canonical records into database
     let totalInserted = 0;
-    let totalSkipped = pipelineResult.errors.length;
     
     if (pipelineResult.records.length > 0) {
       try {
@@ -116,7 +115,7 @@ router.post('/canonical', async (req, res) => {
     const totalInvalid = pipelineResult.errors.length;
     const totalDuplicates = pipelineResult.duplicates.length;
     const totalSkipped = totalInvalid + totalDuplicates; // Skipped = invalid + duplicates
-    const totalProcessed = totalInserted + totalSkipped;
+    const totalProcessed = totalInserted + totalSkipped; 
 
     // Update upload record with accurate breakdown
     uploadRecord.fileSummaries = pipelineResult.fileSummaries;

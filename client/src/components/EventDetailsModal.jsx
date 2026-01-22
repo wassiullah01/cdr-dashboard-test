@@ -191,6 +191,98 @@ function EventDetailsModal({ event, onClose }) {
             </div>
           )}
 
+          {/* Additional Canonical Fields */}
+          {event._canonical && (
+            <>
+              <div style={{
+                marginTop: 'var(--spacing-lg)',
+                paddingTop: 'var(--spacing-md)',
+                borderTop: '1px solid var(--border-color)'
+              }}>
+                <h3 style={{ 
+                  fontSize: '1rem', 
+                  fontWeight: 600,
+                  marginBottom: 'var(--spacing-md)',
+                  color: 'var(--text-secondary)'
+                }}>
+                  Temporal Information
+                </h3>
+                {event._canonical.day_of_week !== null && event._canonical.day_of_week !== undefined && (
+                  <div className="detail-row">
+                    <span className="detail-label">Day of Week:</span>
+                    <span>{['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][event._canonical.day_of_week]}</span>
+                  </div>
+                )}
+                {event._canonical.is_weekend !== null && event._canonical.is_weekend !== undefined && (
+                  <div className="detail-row">
+                    <span className="detail-label">Weekend:</span>
+                    <span>{event._canonical.is_weekend ? 'Yes' : 'No'}</span>
+                  </div>
+                )}
+                {event._canonical.is_night !== null && event._canonical.is_night !== undefined && (
+                  <div className="detail-row">
+                    <span className="detail-label">Night Activity:</span>
+                    <span>{event._canonical.is_night ? 'Yes' : 'No'}</span>
+                  </div>
+                )}
+                {event._canonical.timestamp_local && (
+                  <div className="detail-row">
+                    <span className="detail-label">Date & Time:</span>
+                    <span>{formatDate(event._canonical.timestamp_local)}</span>
+                  </div>
+                )}
+                {event._canonical.hour !== null && event._canonical.hour !== undefined && (
+                  <div className="detail-row">
+                    <span className="detail-label">Hour:</span>
+                    <span>{event._canonical.hour}:00</span>
+                  </div>
+                )}
+              </div>
+
+              {event._canonical.contact_pair_key && (
+                <div style={{
+                  marginTop: 'var(--spacing-md)',
+                  paddingTop: 'var(--spacing-md)',
+                  borderTop: '1px solid var(--border-color)'
+                }}>
+                  <h3 style={{ 
+                    fontSize: '1rem', 
+                    fontWeight: 600,
+                    marginBottom: 'var(--spacing-md)',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    Network Information
+                  </h3>
+                  <div className="detail-row">
+                    <span className="detail-label">Contact Pair Key:</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>{event._canonical.contact_pair_key}</span>
+                  </div>
+                </div>
+              )}
+
+              {event._canonical.service_provider && (
+                <div style={{
+                  marginTop: 'var(--spacing-md)',
+                  paddingTop: 'var(--spacing-md)',
+                  borderTop: '1px solid var(--border-color)'
+                }}>
+                  <h3 style={{ 
+                    fontSize: '1rem', 
+                    fontWeight: 600,
+                    marginBottom: 'var(--spacing-md)',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    Service Provider
+                  </h3>
+                  <div className="detail-row">
+                    <span className="detail-label">Provider:</span>
+                    <span>{event._canonical.service_provider}</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
           <div style={{
             marginTop: 'var(--spacing-lg)',
             paddingTop: 'var(--spacing-md)',
@@ -206,7 +298,7 @@ function EventDetailsModal({ event, onClose }) {
             </h3>
             <div className="detail-row">
               <span className="detail-label">File:</span>
-              <span style={{ fontSize: '0.875rem' }}>{event.source?.fileName || '-'}</span>
+              <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>{event.source?.fileName || '-'}</span>
             </div>
             <div className="detail-row">
               <span className="detail-label">Sheet:</span>
@@ -216,6 +308,12 @@ function EventDetailsModal({ event, onClose }) {
               <span className="detail-label">Row Number:</span>
               <span style={{ fontSize: '0.875rem' }}>{event.source?.rowNumber || '-'}</span>
             </div>
+            {event._canonical?.record_id && (
+              <div className="detail-row">
+                <span className="detail-label">Record ID:</span>
+                <span style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>{event._canonical.record_id}</span>
+              </div>
+            )}
           </div>
 
           {event.normalizationWarnings && event.normalizationWarnings.length > 0 && (

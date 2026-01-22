@@ -89,6 +89,9 @@ export async function generateAnalyticsReadinessVerdict(uploadId) {
     .filter(ts => !isNaN(ts.getTime()))
     .sort((a, b) => a - b);
   
+  // Initialize gaps array outside the if block to avoid reference errors
+  const gaps = [];
+  
   if (timestamps.length > 0) {
     const dateRange = {
       start: timestamps[0].toISOString(),
@@ -97,7 +100,6 @@ export async function generateAnalyticsReadinessVerdict(uploadId) {
     };
     
     // Check for gaps (simplified: check if days are consecutive)
-    const gaps = [];
     for (let i = 1; i < timestamps.length; i++) {
       const diff = (timestamps[i] - timestamps[i - 1]) / (1000 * 60 * 60 * 24);
       if (diff > 2) { // More than 2 days gap

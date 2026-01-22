@@ -290,6 +290,8 @@ export function createCanonicalRecord(rawRecord, source) {
     // Core identifiers
     record_id: recordId,
     source_file: source.fileName || null,
+    source_sheet: source.sheetName || null,
+    source_row_number: source.rowNumber || null,
     
     // Event classification
     event_type: normalizeEventType(rawRecord.eventType),

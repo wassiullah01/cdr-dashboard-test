@@ -19,6 +19,13 @@ const canonicalEventSchema = new mongoose.Schema({
     type: String,
     index: true
   },
+  source_sheet: {
+    type: String,
+    index: true
+  },
+  source_row_number: {
+    type: Number
+  },
   
   // Event classification
   event_type: {

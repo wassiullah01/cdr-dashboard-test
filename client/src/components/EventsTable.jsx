@@ -3,7 +3,7 @@ import EventDetailsModal from './EventDetailsModal';
 import { apiUrl } from '../utils/api';
 import '../styles/tables.css';
 
-function EventsTable({ filters, uploadId, viewMode }) {
+function EventsTable({ filters, uploadId, viewMode, uploadSummary }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -11,6 +11,9 @@ function EventsTable({ filters, uploadId, viewMode }) {
   const [sortBy, setSortBy] = useState('startTime');
   const [sortOrder, setSortOrder] = useState('desc');
   const [selectedEvent, setSelectedEvent] = useState(null);
+  
+  // Determine if multiple files were uploaded
+  const hasMultipleFiles = uploadSummary && uploadSummary.totalFiles > 1;
 
   useEffect(() => {
     fetchEvents();
@@ -145,7 +148,11 @@ function EventsTable({ filters, uploadId, viewMode }) {
                     Duration
                   </th>
                   <th>Site Name</th>
-                  <th>Cell ID</th>
+                  {hasMultipleFiles ? (
+                    <th>File Name</th>
+                  ) : (
+                    <th>Cell ID</th>
+                  )}
                   <th>Details</th>
                 </tr>
               </thead>
@@ -192,9 +199,26 @@ function EventsTable({ filters, uploadId, viewMode }) {
                       <td style={{ fontSize: '0.875rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {event.siteName || event.site || '-'}
                       </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                        {event._canonical?.cell_id || event.cellId || '-'}
-                      </td>
+                      {hasMultipleFiles ? (
+                        <td style={{
+                          fontSize: '0.875rem',
+                          fontWeight: 500,
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          backgroundColor: '#e3f2fd',
+                          color: '#1976d2',
+                          maxWidth: '200px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {event.source?.fileName || '-'}
+                        </td>
+                      ) : (
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                          {event._canonical?.cell_id || event.cellId || '-'}
+                        </td>
+                      )}
                       <td>
                         <button
                           className="view-details-btn"

@@ -1,19 +1,29 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getNetworkGraph } from '../utils/api';
 import '../styles/network.css';
 
 function Network({ currentUploadId, viewMode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navState = location.state || {};
+  const appliedFocusRef = useRef(false);
+
+  // Derive focusPhone from either focusPhone or filterPhone (backward compatible)
+  const focusPhone = navState.focusPhone || navState.filterPhone || null;
+
   const defaultFilters = {
-    from: '',
-    to: '',
+    from: navState.filterFrom || '',
+    to: navState.filterTo || '',
     eventType: 'all',
-    minEdgeWeight: 5,
+    minEdgeWeight: 10,
     limitNodes: 500 
   };
 
   const [filters, setFilters] = useState(defaultFilters);
   const [isLayoutPaused, setIsLayoutPaused] = useState(false);
-  const [layoutStabilized, setLayoutStabilized] = useState(false);
+  const [isStabilizing, setIsStabilizing] = useState(false);
+  const [isStabilized, setIsStabilized] = useState(false);
   
   const [graphData, setGraphData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +78,27 @@ function Network({ currentUploadId, viewMode }) {
     };
   }, [currentUploadId, fetchNetworkGraph]);
 
+  // Handle navigation state: focus phone if provided (apply once and clear router state)
+  useEffect(() => {
+    if (!focusPhone) {
+      appliedFocusRef.current = false; // Reset when no focus phone
+      return;
+    }
+    if (!graphData?.nodes?.length) return;
+
+    if (!appliedFocusRef.current) {
+      const exists = graphData.nodes.some(n => n.id === focusPhone);
+      if (exists) {
+        setSelectedNode(focusPhone);
+        setSelectedEdge(null);
+        appliedFocusRef.current = true;
+      }
+    }
+
+    // Clear router state after attempting
+    navigate(location.pathname, { replace: true, state: null });
+  }, [focusPhone, graphData, location.pathname, navigate]);
+
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
@@ -77,9 +108,29 @@ function Network({ currentUploadId, viewMode }) {
     setSelectedNode(null);
     setSelectedEdge(null);
     setHighlightedCommunity(null);
-    setLayoutStabilized(false);
+    setIsStabilized(false);
+    setIsStabilizing(false);
     setIsLayoutPaused(false);
     // Graph will re-render with new filters, which will reset stabilization
+  };
+
+  const handleStabilize = () => {
+    if (isStabilizing) return; // Already stabilizing
+    
+    setIsStabilizing(true);
+    setIsStabilized(false);
+    setIsLayoutPaused(false); // Resume if paused to allow stabilization
+  };
+
+  const handleResetLayout = () => {
+    // Reset positions by triggering a re-render
+    setIsStabilized(false);
+    setIsStabilizing(false);
+    setIsLayoutPaused(false);
+    // Force graph to reinitialize positions
+    if (graphData) {
+      setGraphData({ ...graphData });
+    }
   };
 
   const handleQuickDatePreset = (preset) => {
@@ -252,26 +303,52 @@ function Network({ currentUploadId, viewMode }) {
             marginBottom: 'var(--spacing-md)',
             display: 'flex',
             gap: 'var(--spacing-sm)',
-            alignItems: 'center'
+            alignItems: 'center',
+            flexWrap: 'wrap'
           }}>
             <button
               className="btn btn-sm"
               onClick={() => setIsLayoutPaused(!isLayoutPaused)}
-              style={{ fontSize: '0.875rem' }}
+              disabled={isStabilizing}
+              style={{ fontSize: '0.875rem', opacity: isStabilizing ? 0.6 : 1 }}
+              title={isStabilizing ? 'Cannot pause while stabilizing' : isLayoutPaused ? 'Resume physics simulation' : 'Pause physics simulation'}
             >
               {isLayoutPaused ? '▶ Resume Layout' : '⏸ Pause Layout'}
             </button>
             <button
               className="btn btn-sm"
-              onClick={() => setLayoutStabilized(true)}
-              disabled={layoutStabilized}
-              style={{ fontSize: '0.875rem' }}
+              onClick={handleStabilize}
+              disabled={isStabilizing || isStabilized}
+              style={{ 
+                fontSize: '0.875rem',
+                opacity: (isStabilizing || isStabilized) ? 0.6 : 1
+              }}
+              title="Run physics simulation for controlled duration, then auto-pause"
             >
-              Stabilize
+              {isStabilizing ? 'Stabilizing...' : isStabilized ? 'Stabilized' : 'Stabilize'}
             </button>
-            {layoutStabilized && (
+            <button
+              className="btn btn-sm"
+              onClick={handleResetLayout}
+              style={{ fontSize: '0.875rem' }}
+              title="Reset node positions and restart simulation"
+            >
+              Reset Layout
+            </button>
+            {isStabilized && !isStabilizing && (
               <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                Layout stabilized
+                Layout stabilized - click Resume to continue simulation
+              </span>
+            )}
+            {graphData.graph.nodes.length > 800 && (
+              <span style={{ 
+                fontSize: '0.75rem', 
+                color: '#f59e0b',
+                padding: '2px 8px',
+                background: '#fef3c7',
+                borderRadius: '4px'
+              }}>
+                Large network ({graphData.graph.nodes.length} nodes) - stabilization may be limited
               </span>
             )}
           </div>
@@ -299,16 +376,21 @@ function Network({ currentUploadId, viewMode }) {
                 <p className="hint">Try adjusting your filters or ensure data exists for this upload.</p>
               </div>
             ) : (
-              <NetworkGraph
-                graphData={graphData}
-                selectedNode={selectedNode}
-                selectedEdge={selectedEdge}
-                highlightedCommunity={highlightedCommunity}
-                onNodeClick={handleNodeClick}
-                onEdgeClick={handleEdgeClick}
-                isPaused={isLayoutPaused}
-                shouldStabilize={layoutStabilized}
-              />
+            <NetworkGraph
+              graphData={graphData}
+              selectedNode={selectedNode}
+              selectedEdge={selectedEdge}
+              highlightedCommunity={highlightedCommunity}
+              onNodeClick={handleNodeClick}
+              onEdgeClick={handleEdgeClick}
+              isPaused={isLayoutPaused}
+              isStabilizing={isStabilizing}
+              onStabilizationComplete={() => {
+                setIsStabilizing(false);
+                setIsStabilized(true);
+                setIsLayoutPaused(true);
+              }}
+            />
             )}
           </div>
 
@@ -378,25 +460,67 @@ function Network({ currentUploadId, viewMode }) {
 
                 {/* Communities */}
                 <div className="sidebar-section">
-                  <h3>Communities ({graphData.communities.length})</h3>
+                  <h3>
+                    Communities ({graphData.communities.length})
+                    <span 
+                      style={{ 
+                        marginLeft: 'var(--spacing-xs)',
+                        fontSize: '0.75rem',
+                        color: 'var(--text-secondary)',
+                        cursor: 'help'
+                      }}
+                      title="Communities are clusters of numbers that communicate more with each other than with the rest of the network."
+                    >
+                    </span>
+                  </h3>
                   <div className="communities-list">
-                    {graphData.communities.map(comm => (
+                    {graphData.communities.length === 1 ? (
                       <div
-                        key={comm.id}
-                        className={`community-item ${highlightedCommunity === comm.id ? 'highlighted' : ''}`}
-                        onClick={() => handleCommunityClick(comm.id)}
+                        className={`community-item ${highlightedCommunity === graphData.communities[0].id ? 'highlighted' : ''}`}
+                        onClick={() => handleCommunityClick(graphData.communities[0].id)}
+                        title="Communities are clusters of numbers that communicate more with each other than with the rest of the network."
                       >
                         <div className="community-header">
-                          <span className="community-id">Community {comm.id}</span>
-                          <span className="community-size">{comm.size} nodes</span>
+                          <span className="community-id">Unified network (no distinct subgroups detected)</span>
+                          <span className="community-size">{graphData.communities[0].size} nodes</span>
                         </div>
                         <div className="community-top-nodes">
-                          {comm.topNodes.slice(0, 3).map(node => (
+                          {graphData.communities[0].topNodes.slice(0, 3).map(node => (
                             <span key={node.id} className="community-node">{node.id.substring(0, 8)}...</span>
                           ))}
                         </div>
                       </div>
-                    ))}
+                    ) : (
+                      graphData.communities.map((comm, index) => {
+                        // Only show "Isolated nodes" if all nodes in community have degree 0
+                        const allIsolated = comm.topNodes.every(node => {
+                          const nodeData = graphData.graph.nodes.find(n => n.id === node.id);
+                          return nodeData && nodeData.degree === 0;
+                        });
+                        const displayLabel = allIsolated && comm.size > 0
+                          ? `Isolated nodes (${comm.size} nodes, no connections)`
+                          : `Community ${index + 1}`;
+                        
+                        return (
+                          <div
+                            key={comm.id}
+                            className={`community-item ${highlightedCommunity === comm.id ? 'highlighted' : ''}`}
+                            onClick={() => handleCommunityClick(comm.id)}
+                            title="Communities are clusters of numbers that communicate more with each other than with the rest of the network."
+                          >
+                            <div className="community-header">
+                              <span className="community-id">{displayLabel}</span>
+                              <span className="community-size">{comm.size} nodes</span>
+                            </div>
+                            <div className="community-top-nodes">
+                              {comm.topNodes.slice(0, 3).map(node => (
+                                <span key={node.id} className="community-node">{node.id.substring(0, 8)}...</span>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
 
@@ -411,7 +535,13 @@ function Network({ currentUploadId, viewMode }) {
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Community:</span>
-                        <span className="detail-value">{selectedNodeData.community}</span>
+                        <span className="detail-value">
+                          {selectedNodeData.community === 'isolate' 
+                            ? 'Isolated node' 
+                            : graphData.communities.length === 1
+                            ? 'Unified network'
+                            : `Community ${graphData.communities.findIndex(c => c.id === selectedNodeData.community) + 1}`}
+                        </span>
                       </div>
                       <div className="detail-row">
                         <span className="detail-label">Degree:</span>
@@ -504,14 +634,17 @@ function Network({ currentUploadId, viewMode }) {
 }
 
 // Network Graph Visualization Component (Canvas-based)
-function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommunity, onNodeClick, onEdgeClick, isPaused = false, shouldStabilize = false }) {
+function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommunity, onNodeClick, onEdgeClick, isPaused = false, isStabilizing = false, onStabilizationComplete }) {
   const canvasRef = React.useRef(null);
   const animationFrameRef = React.useRef(null);
   const positionsRef = React.useRef({});
   const [isDragging, setIsDragging] = React.useState(false);
   const [dragNode, setDragNode] = React.useState(null);
   const stabilizationTicksRef = React.useRef(0);
-  const maxStabilizationTicks = 200; // Run for 200 frames then stop
+  const alphaRef = React.useRef(1.0); // Alpha for cooling down forces
+  const nodeCount = graphData?.graph?.nodes?.length || 0;
+  // Adjust tick count based on network size
+  const maxStabilizationTicks = nodeCount > 800 ? 300 : nodeCount > 500 ? 400 : 500;
 
   // Initialize graph structure
   const nodes = React.useMemo(() => {
@@ -546,7 +679,16 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
     });
     positionsRef.current = positions;
     stabilizationTicksRef.current = 0; // Reset stabilization counter when graph changes
+    alphaRef.current = 1.0; // Reset alpha
   }, [nodes]);
+
+  // Reset stabilization state when isStabilizing changes
+  React.useEffect(() => {
+    if (isStabilizing) {
+      stabilizationTicksRef.current = 0;
+      alphaRef.current = 1.0;
+    }
+  }, [isStabilizing]);
 
   // Force-directed layout and rendering
   React.useEffect(() => {
@@ -566,21 +708,43 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
     // Reset stabilization when graph data changes
     stabilizationTicksRef.current = 0;
+    alphaRef.current = 1.0;
 
-    let animationId;
+    let animationId = null;
     const animate = () => {
-      // Check if paused or stabilized
-      if (isPaused) {
-        // Still render but don't update positions
+      // Check if paused (but allow stabilization to continue)
+      if (isPaused && !isStabilizing) {
+        // Render final frame and STOP animation loop
         renderFrame();
-        animationId = requestAnimationFrame(animate);
-        return;
+        return; // Do NOT schedule another RAF - truly stop
       }
 
       const positions = positionsRef.current;
       if (!positions || Object.keys(positions).length === 0) return;
 
-      // Force-directed algorithm
+      // Calculate alpha decay during stabilization (cooling down forces)
+      if (isStabilizing) {
+        stabilizationTicksRef.current++;
+        // Alpha decays from 1.0 to 0.05 over the stabilization period
+        const progress = stabilizationTicksRef.current / maxStabilizationTicks;
+        alphaRef.current = Math.max(0.05, 1.0 - (progress * 0.95));
+        
+        // Check if stabilization is complete
+        if (stabilizationTicksRef.current >= maxStabilizationTicks) {
+          renderFrame(); // Final render
+          if (onStabilizationComplete) {
+            onStabilizationComplete();
+          }
+          return; // Stop animation - do NOT schedule RAF
+        }
+      } else {
+        alphaRef.current = 1.0; // Full force when not stabilizing
+      }
+
+      // Force-directed algorithm with alpha cooling and force clamping
+      const maxForce = 50; // Cap maximum force to prevent jitter
+      const maxSpeed = 5; // Cap maximum velocity
+      
       nodes.forEach(node => {
         if (isDragging && dragNode === node.id) return; // Skip dragged node
         
@@ -589,7 +753,7 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
         
         let fx = 0, fy = 0;
 
-        // Repulsion from other nodes
+        // Repulsion from other nodes (scaled by alpha)
         nodes.forEach(other => {
           if (node.id === other.id) return;
           const otherPos = positions[other.id];
@@ -598,12 +762,14 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
           const dx = pos.x - otherPos.x;
           const dy = pos.y - otherPos.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const force = 8000 / (dist * dist);
+          let force = (8000 / (dist * dist)) * alphaRef.current;
+          // Clamp force
+          force = Math.min(maxForce, force);
           fx += (dx / dist) * force;
           fy += (dy / dist) * force;
         });
 
-        // Attraction along edges
+        // Attraction along edges (scaled by alpha)
         edges.forEach(edge => {
           if (edge.source === node.id) {
             const targetPos = positions[edge.target];
@@ -611,7 +777,9 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
               const dx = targetPos.x - pos.x;
               const dy = targetPos.y - pos.y;
               const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              const force = dist / 100;
+              let force = (dist / 100) * alphaRef.current;
+              // Clamp force
+              force = Math.min(maxForce, force);
               fx += (dx / dist) * force;
               fy += (dy / dist) * force;
             }
@@ -621,15 +789,27 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
               const dx = sourcePos.x - pos.x;
               const dy = sourcePos.y - pos.y;
               const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              const force = dist / 100;
+              let force = (dist / 100) * alphaRef.current;
+              // Clamp force
+              force = Math.min(maxForce, force);
               fx += (dx / dist) * force;
               fy += (dy / dist) * force;
             }
           }
         });
 
-        pos.vx = (pos.vx + fx) * 0.85;
-        pos.vy = (pos.vy + fy) * 0.85;
+        // Apply damping (increased during stabilization for faster convergence)
+        const damping = isStabilizing ? Math.max(0.92, 0.85 + (0.1 * alphaRef.current)) : 0.85;
+        pos.vx = (pos.vx + fx) * damping;
+        pos.vy = (pos.vy + fy) * damping;
+        
+        // Clamp velocity
+        const speed = Math.sqrt(pos.vx * pos.vx + pos.vy * pos.vy);
+        if (speed > maxSpeed) {
+          pos.vx = (pos.vx / speed) * maxSpeed;
+          pos.vy = (pos.vy / speed) * maxSpeed;
+        }
+        
         pos.x += pos.vx;
         pos.y += pos.vy;
 
@@ -640,18 +820,14 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
       renderFrame();
       
-      // Check stabilization after rendering
-      if (shouldStabilize) {
-        stabilizationTicksRef.current++;
-        if (stabilizationTicksRef.current >= maxStabilizationTicks) {
-          // Stop animation after stabilization
-          return; // Don't continue animation
-        }
+      // Continue animation only if not paused (or if stabilizing)
+      if (!isPaused || isStabilizing) {
+        animationId = requestAnimationFrame(animate);
       }
-      
-      // Continue animation
-      animationId = requestAnimationFrame(animate);
     };
+
+    // Start animation loop
+    animationId = requestAnimationFrame(animate);
 
     const renderFrame = () => {
       const positions = positionsRef.current;
@@ -765,7 +941,7 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-    }, [nodes, edges, selectedNode, selectedEdge, highlightedCommunity, isDragging, dragNode, isPaused, shouldStabilize, onNodeClick]);
+  }, [nodes, edges, selectedNode, selectedEdge, highlightedCommunity, isDragging, dragNode, isPaused, isStabilizing, onStabilizationComplete, onNodeClick]);
 
   return (
     <div className="network-graph">
