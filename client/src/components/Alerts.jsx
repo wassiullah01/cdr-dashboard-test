@@ -18,35 +18,45 @@ function Alerts({ currentUploadId, viewMode }) {
   const [alertsData, setAlertsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [hasFetched, setHasFetched] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState(null);
 
   const fetchAlerts = useCallback(async () => {
     if (!currentUploadId && viewMode === 'current') {
       setLoading(false);
       setAlertsData(null);
+      setHasFetched(false); 
       return;
     }
 
-    // Abort previous request
+    // FIX: Abort previous request before creating new one
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     abortControllerRef.current = new AbortController();
+    const currentAbortController = abortControllerRef.current; // Store reference for this request
 
     setLoading(true);
     setError(null);
+    setHasFetched(false); // FIX: Reset before fetch
 
     try {
       const params = new URLSearchParams();
       params.append('uploadId', currentUploadId);
-      if (filters.from) params.append('from', filters.from);
-      if (filters.to) params.append('to', filters.to);
-      params.append('eventType', filters.eventType);
+      // FIX: Only add filters if they have meaningful values (not empty strings)
+      // This ensures we get all anomalies when no filters are set
+      if (filters.from && filters.from.trim()) params.append('from', filters.from.trim());
+      if (filters.to && filters.to.trim()) params.append('to', filters.to.trim());
+      params.append('eventType', filters.eventType || 'all');
       params.append('baselineRatio', filters.baselineRatio.toString());
-      if (filters.phone) params.append('phone', filters.phone);
+      if (filters.phone && filters.phone.trim()) params.append('phone', filters.phone.trim());
 
-      const response = await fetch(apiUrl(`/api/analytics/anomalies?${params}`), {
-        signal: abortControllerRef.current.signal
+      const url = apiUrl(`/api/analytics/anomalies?${params}`);
+      console.log('[Alerts] Fetching anomalies:', url); // Debug log
+      
+      const response = await fetch(url, {
+        signal: currentAbortController.signal
       });
 
       if (!response.ok) {
@@ -54,23 +64,49 @@ function Alerts({ currentUploadId, viewMode }) {
       }
 
       const data = await response.json();
-      setAlertsData(data);
-      setError(null);
+      if (currentAbortController === abortControllerRef.current && !currentAbortController.signal.aborted) {
+        setAlertsData(data);
+        setError(null);
+        setHasFetched(true);
+        setLoading(false);
+      }
     } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Failed to fetch alerts:', err);
-      setError(err.message || 'Failed to load alerts');
+      // FIX: Silently handle AbortError - it's expected when component unmounts or filters change
+      if (err.name === 'AbortError') {
+        // Don't update state or log error for aborted requests
+        return;
+      }
+      // FIX: Only update error state if request wasn't aborted (check the controller we started with)
+      if (currentAbortController === abortControllerRef.current && !currentAbortController.signal.aborted) {
+        console.error('Failed to fetch alerts:', err);
+        setError(err.message || 'Failed to load alerts');
+        setHasFetched(false);
+        setLoading(false);
+      }
     } finally {
-      setLoading(false);
-      abortControllerRef.current = null;
+      // FIX: Clean up only if this is still the current controller
+      if (currentAbortController === abortControllerRef.current) {
+        abortControllerRef.current = null;
+      }
     }
   }, [currentUploadId, viewMode, filters]);
 
+  // FIX: Separate effect for initial mount vs filter changes
+  // This ensures we always fetch on mount, even if filters haven't changed
+  const isInitialMount = React.useRef(true);
+  
   useEffect(() => {
     fetchAlerts();
+    
     return () => {
       if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        const controller = abortControllerRef.current;
+        if (controller && controller.signal && !controller.signal.aborted) {
+          try {
+            controller.abort();
+          } catch {}
+        }
+        abortControllerRef.current = null;
       }
     };
   }, [fetchAlerts]);
@@ -92,32 +128,54 @@ function Alerts({ currentUploadId, viewMode }) {
   };
 
   const handleQuickDatePreset = (preset) => {
-    const now = new Date();
+    // Anchor to dataset end time (recent window end or baseline end)
+    const anchorNow = alertsData?.recent?.endUtc || alertsData?.baseline?.endUtc;
+    
+    if (!anchorNow && preset !== 'all') {
+      return;
+    }
+
     let from = '';
     let to = '';
 
-    switch (preset) {
-      case '30d':
-        from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        to = now.toISOString();
-        break;
-      case '7d':
-        from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        to = now.toISOString();
-        break;
-      case 'all':
-        from = '';
-        to = '';
-        break;
-      default:
-        return;
+    if (preset === 'all') {
+      from = '';
+      to = '';
+    } else if (anchorNow) {
+      const anchorDate = new Date(anchorNow);
+      switch (preset) {
+        case '30d':
+          from = new Date(anchorDate.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+          to = anchorDate.toISOString();
+          break;
+        case '7d':
+          from = new Date(anchorDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          to = anchorDate.toISOString();
+          break;
+        default:
+          return;
+      }
     }
 
     setFilters(prev => ({ ...prev, from, to }));
   };
 
+  // FIX: Apply navigation state with filters and focus phone for Network drill-down
+  // Use alert.window.recent FIRST (most correct for the specific alert)
   const handleViewInNetwork = (alert) => {
-    navigate('/network', { state: { focusPhone: alert.phone } });
+    const filterFrom = alert.window?.recent?.startUtc || alertsData?.recent?.startUtc || filters.from || '';
+    const filterTo = alert.window?.recent?.endUtc || alertsData?.recent?.endUtc || filters.to || '';
+    
+    navigate('/network', { 
+      state: { 
+        focusPhone: alert.phone,
+        filterFrom,
+        filterTo,
+        eventType: filters.eventType || 'all',
+        minEdgeWeight: 10,
+        limitNodes: 500
+      } 
+    });
   };
 
   const handleViewEvents = (alert) => {
@@ -168,8 +226,8 @@ function Alerts({ currentUploadId, viewMode }) {
     <div className="alerts-page" style={{ padding: 'var(--spacing-lg)' }}>
       <div className="container">
         <div className="alerts-header" style={{ marginBottom: 'var(--spacing-lg)' }}>
-          <h1>Anomaly Alerts</h1>
-          <p className="subheader">
+          <h1 style={{ marginBottom: 'var(--spacing-xs)', color: 'var(--primary-color)', fontSize: '2rem', fontWeight: 700 }}>Anomaly Alerts</h1>
+          <p className="subheader" style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
             {currentUploadId ? `Upload: ${currentUploadId.substring(0, 8)}...` : 'No upload selected'}
           </p>
         </div>
@@ -185,9 +243,29 @@ function Alerts({ currentUploadId, viewMode }) {
             <div className="filter-group">
               <label>Date Range</label>
               <div style={{ display: 'flex', gap: 'var(--spacing-xs)' }}>
-                <button onClick={() => handleQuickDatePreset('30d')} className="btn btn-sm">Last 30d</button>
-                <button onClick={() => handleQuickDatePreset('7d')} className="btn btn-sm">Last 7d</button>
-                <button onClick={() => handleQuickDatePreset('all')} className="btn btn-sm">All</button>
+                {/* FIX: Disable date presets until alertsData is loaded (needed for anchor time) */}
+                <button 
+                  onClick={() => handleQuickDatePreset('30d')} 
+                  className="btn btn-sm"
+                  disabled={!alertsData}
+                  title={!alertsData ? 'Load data first to use date presets' : ''}
+                >
+                  Last 30d
+                </button>
+                <button 
+                  onClick={() => handleQuickDatePreset('7d')} 
+                  className="btn btn-sm"
+                  disabled={!alertsData}
+                  title={!alertsData ? 'Load data first to use date presets' : ''}
+                >
+                  Last 7d
+                </button>
+                <button 
+                  onClick={() => handleQuickDatePreset('all')} 
+                  className="btn btn-sm"
+                >
+                  All
+                </button>
               </div>
               <div style={{ display: 'flex', gap: 'var(--spacing-xs)', marginTop: 'var(--spacing-xs)' }}>
                 <input
@@ -300,7 +378,15 @@ function Alerts({ currentUploadId, viewMode }) {
         )}
 
         {/* Main Content */}
-        {loading ? (
+        {/* FIX: Show distinct states: no upload, loading, error, empty (only after successful fetch) */}
+        {!currentUploadId && viewMode === 'current' ? (
+          <div className="empty-state" style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
+            <p>No upload selected.</p>
+            <p style={{ fontSize: '0.875rem', marginTop: 'var(--spacing-xs)', color: 'var(--text-secondary)' }}>
+              Upload or select a dataset to view anomalies.
+            </p>
+          </div>
+        ) : loading ? (
           <div className="loading" style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
             <div className="spinner"></div>
             <p>Loading anomalies...</p>
@@ -312,14 +398,14 @@ function Alerts({ currentUploadId, viewMode }) {
               Retry
             </button>
           </div>
-        ) : !alertsData || alertsData.alerts.length === 0 ? (
+        ) : hasFetched && (!alertsData || !alertsData.alerts || alertsData.alerts.length === 0) ? (
           <div className="empty-state" style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
             <p>No anomalies found for this dataset/filters.</p>
             <p style={{ fontSize: '0.875rem', marginTop: 'var(--spacing-xs)', color: 'var(--text-secondary)' }}>
               Try adjusting filters, lowering thresholds, or widening the date range.
             </p>
           </div>
-        ) : (
+        ) : alertsData && alertsData.alerts && alertsData.alerts.length > 0 ? (
           <div style={{ display: 'flex', gap: 'var(--spacing-lg)', flexWrap: 'wrap' }}>
             {/* Alert List */}
             <div style={{ flex: '1 1 400px', minWidth: '300px' }}>
@@ -401,6 +487,11 @@ function Alerts({ currentUploadId, viewMode }) {
                 onViewTimeline={() => handleViewTimeline(selectedAlert)}
               />
             )}
+          </div>
+        ) : (
+          /* FIX: Fallback for edge case (shouldn't normally happen) */
+          <div className="loading" style={{ padding: 'var(--spacing-xl)', textAlign: 'center' }}>
+            <p>Preparing alerts...</p>
           </div>
         )}
       </div>

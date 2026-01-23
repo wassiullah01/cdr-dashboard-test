@@ -7,7 +7,12 @@ function Network({ currentUploadId, viewMode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const navState = location.state || {};
-  const appliedFocusRef = useRef(false);
+  
+  // FIX: Canonicalize ALL node IDs using helper
+  const normalizeId = (v) => String(v || '').trim();
+  
+  // FIX: Use refs to track applied navigation state (resilient to StrictMode double effects)
+  const navApplyRef = useRef({ appliedFiltersKey: null, appliedFocusKey: null });
 
   // Derive focusPhone from either focusPhone or filterPhone (backward compatible)
   const focusPhone = navState.focusPhone || navState.filterPhone || null;
@@ -15,7 +20,7 @@ function Network({ currentUploadId, viewMode }) {
   const defaultFilters = {
     from: navState.filterFrom || '',
     to: navState.filterTo || '',
-    eventType: 'all',
+    eventType: navState.eventType || 'all',
     minEdgeWeight: 10,
     limitNodes: 500 
   };
@@ -58,7 +63,6 @@ function Network({ currentUploadId, viewMode }) {
       if (err.name === 'AbortError') {
         return; // Request was aborted, ignore
       }
-      console.error('Failed to fetch network graph:', err);
       setError(err.message || 'Failed to load network graph');
     } finally {
       setLoading(false);
@@ -78,26 +82,78 @@ function Network({ currentUploadId, viewMode }) {
     };
   }, [currentUploadId, fetchNetworkGraph]);
 
-  // Handle navigation state: focus phone if provided (apply once and clear router state)
+  // FIX: Apply navigation state filters into live filters state (not just defaultFilters)
+  // Build stable navKey to track unique navigation events
+  const navKey = React.useMemo(() => {
+    return JSON.stringify({ 
+      focusPhone, 
+      filterFrom: navState.filterFrom, 
+      filterTo: navState.filterTo, 
+      eventType: navState.eventType 
+    });
+  }, [focusPhone, navState.filterFrom, navState.filterTo, navState.eventType]);
+
+  const fetchTriggeredRef = useRef(false);
   useEffect(() => {
-    if (!focusPhone) {
-      appliedFocusRef.current = false; // Reset when no focus phone
+    const hasNavFilters = !!(navState.filterFrom || navState.filterTo || navState.eventType);
+    if (!hasNavFilters) {
+      navApplyRef.current.appliedFiltersKey = null; // Reset when no nav filters
+      fetchTriggeredRef.current = false;
       return;
     }
-    if (!graphData?.nodes?.length) return;
 
-    if (!appliedFocusRef.current) {
-      const exists = graphData.nodes.some(n => n.id === focusPhone);
-      if (exists) {
-        setSelectedNode(focusPhone);
-        setSelectedEdge(null);
-        appliedFocusRef.current = true;
-      }
+    // Apply once per unique navigation event
+    if (navApplyRef.current.appliedFiltersKey !== navKey) {
+      setFilters(prev => ({
+        ...prev,
+        from: navState.filterFrom ?? prev.from,
+        to: navState.filterTo ?? prev.to,
+        eventType: navState.eventType ?? prev.eventType,
+        minEdgeWeight: navState.minEdgeWeight ?? prev.minEdgeWeight,
+        limitNodes: navState.limitNodes ?? prev.limitNodes
+      }));
+      navApplyRef.current.appliedFiltersKey = navKey;
+      fetchTriggeredRef.current = false; // Reset fetch trigger
     }
 
-    // Clear router state after attempting
-    navigate(location.pathname, { replace: true, state: null });
-  }, [focusPhone, graphData, location.pathname, navigate]);
+    // FIX: Force immediate refetch after applying nav filters (don't rely on passive re-fetch)
+    // Use a ref to track if we've triggered fetch for this navKey to avoid loops
+    if (navApplyRef.current.appliedFiltersKey === navKey && !fetchTriggeredRef.current && currentUploadId) {
+      fetchTriggeredRef.current = true;
+      // Trigger fetch immediately after state update (use setTimeout to let state settle)
+      const timer = setTimeout(() => {
+        if (currentUploadId) {
+          fetchNetworkGraph();
+        }
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [navKey, navState.filterFrom, navState.filterTo, navState.eventType, navState.minEdgeWeight, navState.limitNodes, currentUploadId, fetchNetworkGraph]);
+
+  // FIX: Focus node effect - apply focusPhone after graphData loads AND filters are applied
+  useEffect(() => {
+    if (!focusPhone) {
+      navApplyRef.current.appliedFocusKey = null;
+      return;
+    }
+    if (!graphData?.graph?.nodes?.length) return;
+    if (navApplyRef.current.appliedFiltersKey !== navKey) return;
+
+    // Apply focus once per unique navigation event
+    if (navApplyRef.current.appliedFocusKey !== navKey) {
+        const focusPhoneStr = normalizeId(focusPhone);
+      const exists = graphData.graph.nodes.some(n => normalizeId(n.id) === focusPhoneStr);
+      if (exists) {
+        setSelectedNode(focusPhoneStr);
+        setSelectedEdge(null);
+        setHighlightedCommunity(null);
+      }
+      navApplyRef.current.appliedFocusKey = navKey;
+      
+      // FIX: Clear router state ONLY after both filters and focus have been attempted
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [focusPhone, graphData, navKey, location.pathname, navigate]);
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -162,12 +218,14 @@ function Network({ currentUploadId, viewMode }) {
     setFilters(prev => ({ ...prev, from, to }));
   };
 
+  // FIX: Ensure nodeId is stored as normalized string
   const handleNodeClick = (nodeId) => {
-    if (selectedNode === nodeId) {
+    const nodeIdStr = normalizeId(nodeId);
+    if (normalizeId(selectedNode) === nodeIdStr) {
       setSelectedNode(null);
       setSelectedEdge(null);
     } else {
-      setSelectedNode(nodeId);
+      setSelectedNode(nodeIdStr);
       setSelectedEdge(null);
     }
   };
@@ -185,22 +243,37 @@ function Network({ currentUploadId, viewMode }) {
     }
   };
 
-  // Get selected node details
-  const selectedNodeData = graphData?.graph?.nodes?.find(n => n.id === selectedNode);
+  // FIX: Get selected node details with normalized string comparison
+  const selectedNodeData = React.useMemo(() => {
+    if (!selectedNode || !graphData?.graph?.nodes) return null;
+    
+    const selectedId = normalizeId(selectedNode);
+    return graphData.graph.nodes.find(n => normalizeId(n.id) === selectedId) || null;
+  }, [selectedNode, graphData]);
   
   // Get selected edge details
   const selectedEdgeData = graphData?.graph?.edges?.find(e => e.id === selectedEdge);
   
-  // Get top contacts for selected node
+  // FIX: Get top contacts for selected node with normalized string matching
   const topContacts = selectedNodeData
     ? graphData?.graph?.edges
-        ?.filter(e => e.source === selectedNode || e.target === selectedNode)
-        .map(e => ({
-          number: e.source === selectedNode ? e.target : e.source,
-          weight: e.weight,
-          eventCount: e.eventCount,
-          totalDuration: e.totalDuration
-        }))
+        ?.filter(e => {
+          const sourceId = normalizeId(e.source);
+          const targetId = normalizeId(e.target);
+          const selectedId = normalizeId(selectedNode);
+          return sourceId === selectedId || targetId === selectedId;
+        })
+        .map(e => {
+          const sourceId = normalizeId(e.source);
+          const targetId = normalizeId(e.target);
+          const selectedId = normalizeId(selectedNode);
+          return {
+            number: sourceId === selectedId ? targetId : sourceId,
+            weight: e.weight,
+            eventCount: e.eventCount,
+            totalDuration: e.totalDuration
+          };
+        })
         .sort((a, b) => b.weight - a.weight)
         .slice(0, 10)
     : [];
@@ -439,14 +512,15 @@ function Network({ currentUploadId, viewMode }) {
                 <div className="sidebar-section">
                   <h3>Top Nodes</h3>
                   <div className="top-nodes-list">
-                    {graphData.graph.nodes
+                    {/* FIX: Sort a copy to prevent in-place mutation of graphData */}
+                    {[...graphData.graph.nodes]
                       .sort((a, b) => b.weightedDegree - a.weightedDegree)
                       .slice(0, 10)
                       .map(node => (
                         <div
                           key={node.id}
-                          className={`node-item ${selectedNode === node.id ? 'selected' : ''}`}
-                          onClick={() => handleNodeClick(node.id)}
+                          className={`node-item ${String(selectedNode || '') === String(node.id || '') ? 'selected' : ''}`}
+                          onClick={() => handleNodeClick(String(node.id || ''))}
                         >
                           <div className="node-number">{node.id}</div>
                           <div className="node-stats">
@@ -523,6 +597,25 @@ function Network({ currentUploadId, viewMode }) {
                     )}
                   </div>
                 </div>
+
+                {/* FIX: Show warning if focusPhone was provided but not found in graph */}
+                {focusPhone && graphData.graph.nodes.length > 0 && !graphData.graph.nodes.some(n => normalizeId(n.id) === normalizeId(focusPhone)) && (
+                  <div className="sidebar-section">
+                    <div className="warning-box" style={{ 
+                      background: '#fef3c7', 
+                      border: '1px solid #f59e0b',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 'var(--spacing-md)',
+                      marginBottom: 'var(--spacing-md)'
+                    }}>
+                      <strong style={{ color: '#92400e' }}>⚠ Focused number not present</strong>
+                      <p style={{ fontSize: '0.875rem', color: '#92400e', marginTop: 'var(--spacing-xs)' }}>
+                        The number <code>{focusPhone}</code> is not present in the current graph with the applied filters. 
+                        Try widening the date range or adjusting other filters.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Selection Details */}
                 {selectedNodeData && (
@@ -635,15 +728,17 @@ function Network({ currentUploadId, viewMode }) {
 
 // Network Graph Visualization Component (Canvas-based)
 function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommunity, onNodeClick, onEdgeClick, isPaused = false, isStabilizing = false, onStabilizationComplete }) {
+  // FIX: Canonicalize ALL node IDs using helper
+  const normalizeId = (v) => String(v || '').trim();
+  
   const canvasRef = React.useRef(null);
   const animationFrameRef = React.useRef(null);
   const positionsRef = React.useRef({});
   const [isDragging, setIsDragging] = React.useState(false);
   const [dragNode, setDragNode] = React.useState(null);
   const stabilizationTicksRef = React.useRef(0);
-  const alphaRef = React.useRef(1.0); // Alpha for cooling down forces
+  const alphaRef = React.useRef(1.0);
   const nodeCount = graphData?.graph?.nodes?.length || 0;
-  // Adjust tick count based on network size
   const maxStabilizationTicks = nodeCount > 800 ? 300 : nodeCount > 500 ? 400 : 500;
 
   // Initialize graph structure
@@ -664,13 +759,15 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
     }));
   }, [graphData]);
 
-  // Initialize positions
+  // Initialize positions with normalized IDs
   React.useEffect(() => {
     if (nodes.length === 0) return;
 
+    const normalizeId = (v) => String(v || '').trim();
     const positions = {};
     nodes.forEach(node => {
-      positions[node.id] = {
+      const nodeId = normalizeId(node.id);
+      positions[nodeId] = {
         x: Math.random() * 800 + 100,
         y: Math.random() * 500 + 100,
         vx: 0,
@@ -678,8 +775,8 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       };
     });
     positionsRef.current = positions;
-    stabilizationTicksRef.current = 0; // Reset stabilization counter when graph changes
-    alphaRef.current = 1.0; // Reset alpha
+    stabilizationTicksRef.current = 0;
+    alphaRef.current = 1.0;
   }, [nodes]);
 
   // Reset stabilization state when isStabilizing changes
@@ -745,18 +842,21 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       const maxForce = 50; // Cap maximum force to prevent jitter
       const maxSpeed = 5; // Cap maximum velocity
       
+      const normalizeId = (v) => String(v || '').trim();
       nodes.forEach(node => {
-        if (isDragging && dragNode === node.id) return; // Skip dragged node
+        const nodeId = normalizeId(node.id);
+        if (isDragging && normalizeId(dragNode) === nodeId) return;
         
-        const pos = positions[node.id];
+        const pos = positions[nodeId];
         if (!pos) return;
         
         let fx = 0, fy = 0;
 
         // Repulsion from other nodes (scaled by alpha)
         nodes.forEach(other => {
-          if (node.id === other.id) return;
-          const otherPos = positions[other.id];
+          const otherId = normalizeId(other.id);
+          if (nodeId === otherId) return;
+          const otherPos = positions[otherId];
           if (!otherPos) return;
           
           const dx = pos.x - otherPos.x;
@@ -771,26 +871,26 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
         // Attraction along edges (scaled by alpha)
         edges.forEach(edge => {
-          if (edge.source === node.id) {
-            const targetPos = positions[edge.target];
+          const sourceId = normalizeId(edge.source);
+          const targetId = normalizeId(edge.target);
+          if (sourceId === nodeId) {
+            const targetPos = positions[targetId];
             if (targetPos) {
               const dx = targetPos.x - pos.x;
               const dy = targetPos.y - pos.y;
               const dist = Math.sqrt(dx * dx + dy * dy) || 1;
               let force = (dist / 100) * alphaRef.current;
-              // Clamp force
               force = Math.min(maxForce, force);
               fx += (dx / dist) * force;
               fy += (dy / dist) * force;
             }
-          } else if (edge.target === node.id) {
-            const sourcePos = positions[edge.source];
+          } else if (targetId === nodeId) {
+            const sourcePos = positions[sourceId];
             if (sourcePos) {
               const dx = sourcePos.x - pos.x;
               const dy = sourcePos.y - pos.y;
               const dist = Math.sqrt(dx * dx + dy * dy) || 1;
               let force = (dist / 100) * alphaRef.current;
-              // Clamp force
               force = Math.min(maxForce, force);
               fx += (dx / dist) * force;
               fy += (dy / dist) * force;
@@ -838,8 +938,10 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
       // Draw edges
       edges.forEach(edge => {
-        const sourcePos = positions[edge.source];
-        const targetPos = positions[edge.target];
+        const sourceId = normalizeId(edge.source);
+        const targetId = normalizeId(edge.target);
+        const sourcePos = positions[sourceId];
+        const targetPos = positions[targetId];
         if (!sourcePos || !targetPos) return;
 
         ctx.strokeStyle = selectedEdge === edge.id ? '#ff0000' : '#cccccc';
@@ -852,10 +954,12 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
       // Draw nodes
       nodes.forEach(node => {
-        const pos = positions[node.id];
+        const nodeId = normalizeId(node.id);
+        const pos = positions[nodeId];
         if (!pos) return;
 
-        const isSelected = selectedNode === node.id;
+        const selectedId = normalizeId(selectedNode);
+        const isSelected = selectedId === nodeId;
         const isHighlighted = highlightedCommunity && node.community === highlightedCommunity;
 
         // Node circle
@@ -889,9 +993,12 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      // Find clicked node
-      for (const node of nodes) {
-        const pos = positionsRef.current[node.id];
+      // FIX: Find clicked node with normalized ID matching
+      const candidateNodes = [];
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i];
+        const nodeId = normalizeId(node.id);
+        const pos = positionsRef.current[nodeId];
         if (!pos) continue;
         
         const dx = x - pos.x;
@@ -899,11 +1006,22 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
         const dist = Math.sqrt(dx * dx + dy * dy);
         
         if (dist < node.size + 5) {
-          setIsDragging(true);
-          setDragNode(node.id);
-          onNodeClick(node.id);
-          return;
+          candidateNodes.push({
+            node,
+            dist,
+            nodeId
+          });
         }
+      }
+      
+      if (candidateNodes.length > 0) {
+        candidateNodes.sort((a, b) => a.dist - b.dist);
+        const clickedNode = candidateNodes[0];
+        
+        setIsDragging(true);
+        setDragNode(clickedNode.nodeId);
+        onNodeClick(clickedNode.nodeId);
+        return;
       }
     };
 
@@ -914,12 +1032,13 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      const pos = positionsRef.current[dragNode];
-      if (pos) {
-        pos.x = Math.max(nodes.find(n => n.id === dragNode)?.size || 10, 
-                        Math.min(canvas.width - (nodes.find(n => n.id === dragNode)?.size || 10), x));
-        pos.y = Math.max(nodes.find(n => n.id === dragNode)?.size || 10, 
-                        Math.min(canvas.height - (nodes.find(n => n.id === dragNode)?.size || 10), y));
+      const dragNodeId = normalizeId(dragNode);
+      const draggedNode = nodes.find(n => normalizeId(n.id) === dragNodeId);
+      const pos = positionsRef.current[dragNodeId];
+      if (pos && draggedNode) {
+        const nodeSize = draggedNode.size || 10;
+        pos.x = Math.max(nodeSize, Math.min(canvas.width - nodeSize, x));
+        pos.y = Math.max(nodeSize, Math.min(canvas.height - nodeSize, y));
         pos.vx = 0;
         pos.vy = 0;
       }
