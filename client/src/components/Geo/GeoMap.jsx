@@ -1,11 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, useMap, CircleMarker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-// Import leaflet.heat plugin (extends L with heatLayer method)
-// The plugin adds L.heatLayer() function
 import 'leaflet.heat';
 
-// Fix default marker icons (Leaflet issue with webpack)
+// Fix default marker icons (Leaflet webpack issue)
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -34,12 +32,10 @@ function HeatmapLayer({ data }) {
       cell.weight || cell.eventCount || 1
     ]);
 
-    // Remove existing layer
     if (heatLayerRef.current) {
       map.removeLayer(heatLayerRef.current);
     }
 
-    // Create new heat layer (L.heatLayer is added by leaflet.heat plugin)
     if (typeof L.heatLayer !== 'function') {
       console.error('L.heatLayer is not available. Ensure leaflet.heat package is installed.');
       return;
@@ -94,7 +90,6 @@ function PointsLayer({ data, filters, onPointClick, selectedPoint }) {
   const map = useMap();
   const zoom = map.getZoom();
 
-  // Only show points when zoomed in enough or phone filter is active
   if (zoom < 10 && !filters.phone) {
     return null;
   }
@@ -103,7 +98,6 @@ function PointsLayer({ data, filters, onPointClick, selectedPoint }) {
     return null;
   }
 
-  // Limit points for performance
   const maxPoints = filters.pointLimit || 2000;
   const pointsToShow = data.points.slice(0, maxPoints);
 
@@ -152,7 +146,6 @@ function TracePath({ data, onPointClick, selectedPoint }) {
           opacity: 0.7
         }}
       />
-      {/* Start marker (green) */}
       {startPoint && (
         <CircleMarker
           center={[startPoint.lat, startPoint.lng]}
@@ -168,7 +161,6 @@ function TracePath({ data, onPointClick, selectedPoint }) {
           }}
         />
       )}
-      {/* End marker (red) */}
       {endPoint && (
         <CircleMarker
           center={[endPoint.lat, endPoint.lng]}
@@ -184,7 +176,6 @@ function TracePath({ data, onPointClick, selectedPoint }) {
           }}
         />
       )}
-      {/* Intermediate points */}
       {data.points.slice(1, -1).map((point, idx) => {
         const actualIdx = idx + 1;
         const isSelected = selectedPoint?.index === actualIdx;
@@ -220,11 +211,9 @@ function GeoMap({ summary, heatmapData, traceData, pointsData, viewMode, filters
     }
   }, [selectedPoint]);
 
-  // Default center (Pakistan/Karachi area)
   const defaultCenter = [24.8607, 67.0011];
   const defaultZoom = 6;
 
-  // Determine initial bounds from summary or data
   const getInitialBounds = () => {
     if (summary?.bbox) {
       return [
@@ -232,7 +221,6 @@ function GeoMap({ summary, heatmapData, traceData, pointsData, viewMode, filters
         [summary.bbox.maxLat, summary.bbox.maxLng]
       ];
     }
-    // Fallback: try to get bounds from trace/points data
     if (traceData?.points && traceData.points.length > 0) {
       const lats = traceData.points.map(p => p.lat).filter(l => l != null);
       const lngs = traceData.points.map(p => p.lng).filter(l => l != null);
@@ -266,7 +254,6 @@ function GeoMap({ summary, heatmapData, traceData, pointsData, viewMode, filters
         style={{ height: '100%', width: '100%' }}
         whenCreated={(mapInstance) => {
           mapRef.current = mapInstance;
-          // Fit to bounds if available
           if (initialBounds) {
             mapInstance.fitBounds(initialBounds, { padding: [50, 50] });
           }

@@ -88,7 +88,6 @@ export function normalizeHeaders(headers) {
       }
     }
 
-    // Second pass: look for partial matches only if exact match not found
     if (!found) {
       for (let i = 0; i < headers.length; i++) {
         const header = headerLower[i];
@@ -233,7 +232,7 @@ export function parseDate(value) {
     }
   }
 
-  // Try MM/DD/YYYY (US format) - only if day <= 12 (ambiguous otherwise)
+  // Try MM/DD/YYYY (US format) - only if day <= 12 to avoid ambiguity
   match = str.match(mmddFormat);
   if (match) {
     const month = parseInt(match[1], 10) - 1;
@@ -298,7 +297,6 @@ export function parseDate(value) {
   const date = new Date(str);
   if (!isNaN(date.getTime())) {
     const year = date.getFullYear();
-    // Only accept if in reasonable range
     if (year >= 2015 && year <= 2030) {
       return date;
     }
@@ -463,9 +461,7 @@ export function normalizeRow(row, headers, source) {
     return { error: 'Missing both aParty and bParty' };
   }
 
-  // Parse direction with correct priority:
-  // 1. Dedicated Direction column takes precedence
-  // 2. Only derive from eventType if direction column is missing/empty
+  // Dedicated Direction column takes precedence; derive from eventType only if missing
   const dirValue = getValue('direction');
   if (dirValue && String(dirValue).trim()) {
     // Dedicated direction column exists and has value - use it

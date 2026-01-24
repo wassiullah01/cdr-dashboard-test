@@ -7,7 +7,6 @@ import { resolveUploadId } from '../utils/uploadSession.js';
 const router = express.Router();
 
 // GET /api/events - Get events with filters and pagination
-// MIGRATED: Uses EventCanonical only - maps canonical fields to legacy response shape for frontend compatibility
 router.get('/', async (req, res) => {
   try {
     const {

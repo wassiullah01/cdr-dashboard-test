@@ -29,23 +29,21 @@ function Alerts({ currentUploadId, viewMode }) {
       return;
     }
 
-    // FIX: Abort previous request before creating new one
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
     abortControllerRef.current = new AbortController();
-    const currentAbortController = abortControllerRef.current; // Store reference for this request
+    const currentAbortController = abortControllerRef.current;
 
     setLoading(true);
     setError(null);
-    setHasFetched(false); // FIX: Reset before fetch
+    setHasFetched(false);
 
     try {
       const params = new URLSearchParams();
       params.append('uploadId', currentUploadId);
-      // FIX: Only add filters if they have meaningful values (not empty strings)
-      // This ensures we get all anomalies when no filters are set
+      // Only add filters if they have meaningful values (not empty strings)
       if (filters.from && filters.from.trim()) params.append('from', filters.from.trim());
       if (filters.to && filters.to.trim()) params.append('to', filters.to.trim());
       params.append('eventType', filters.eventType || 'all');
@@ -53,7 +51,6 @@ function Alerts({ currentUploadId, viewMode }) {
       if (filters.phone && filters.phone.trim()) params.append('phone', filters.phone.trim());
 
       const url = apiUrl(`/api/analytics/anomalies?${params}`);
-      console.log('[Alerts] Fetching anomalies:', url); // Debug log
       
       const response = await fetch(url, {
         signal: currentAbortController.signal
@@ -71,12 +68,9 @@ function Alerts({ currentUploadId, viewMode }) {
         setLoading(false);
       }
     } catch (err) {
-      // FIX: Silently handle AbortError - it's expected when component unmounts or filters change
       if (err.name === 'AbortError') {
-        // Don't update state or log error for aborted requests
         return;
       }
-      // FIX: Only update error state if request wasn't aborted (check the controller we started with)
       if (currentAbortController === abortControllerRef.current && !currentAbortController.signal.aborted) {
         console.error('Failed to fetch alerts:', err);
         setError(err.message || 'Failed to load alerts');
@@ -84,15 +78,12 @@ function Alerts({ currentUploadId, viewMode }) {
         setLoading(false);
       }
     } finally {
-      // FIX: Clean up only if this is still the current controller
       if (currentAbortController === abortControllerRef.current) {
         abortControllerRef.current = null;
       }
     }
   }, [currentUploadId, viewMode, filters]);
 
-  // FIX: Separate effect for initial mount vs filter changes
-  // This ensures we always fetch on mount, even if filters haven't changed
   const isInitialMount = React.useRef(true);
   
   useEffect(() => {
@@ -160,8 +151,7 @@ function Alerts({ currentUploadId, viewMode }) {
     setFilters(prev => ({ ...prev, from, to }));
   };
 
-  // FIX: Apply navigation state with filters and focus phone for Network drill-down
-  // Use alert.window.recent FIRST (most correct for the specific alert)
+  // Use alert.window.recent first (most correct for the specific alert)
   const handleViewInNetwork = (alert) => {
     const filterFrom = alert.window?.recent?.startUtc || alertsData?.recent?.startUtc || filters.from || '';
     const filterTo = alert.window?.recent?.endUtc || alertsData?.recent?.endUtc || filters.to || '';

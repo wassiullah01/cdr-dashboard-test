@@ -8,19 +8,17 @@ function Network({ currentUploadId, viewMode }) {
   const navigate = useNavigate();
   const navState = location.state || {};
   
-  // FIX: Canonicalize ALL node IDs using helper
   const normalizeId = (v) => String(v ?? '').trim();
   
-  // FIX: Canonical node registry for stable lookups in canvas/physics simulation
+  // Canonical node registry for stable lookups in canvas/physics simulation
   // Node objects are recreated and array order can change, so we maintain a stable
   // Map keyed by normalized ID to ensure selection/details always match the clicked node
   const nodeIndexRef = useRef(new Map());
   const edgeIndexRef = useRef(new Map());
   
-  // FIX: Use refs to track applied navigation state (resilient to StrictMode double effects)
+  // Track applied navigation state (resilient to StrictMode double effects)
   const navApplyRef = useRef({ appliedFiltersKey: null, appliedFocusKey: null });
 
-  // Derive focusPhone from either focusPhone or filterPhone (backward compatible)
   const focusPhone = navState.focusPhone || navState.filterPhone || null;
 
   const defaultFilters = {
@@ -45,9 +43,7 @@ function Network({ currentUploadId, viewMode }) {
   
   const abortControllerRef = useRef(null);
 
-  // Fetch network graph
   const fetchNetworkGraph = useCallback(async () => {
-    // Abort previous request if still pending
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -67,7 +63,7 @@ function Network({ currentUploadId, viewMode }) {
       setGraphData(data);
     } catch (err) {
       if (err.name === 'AbortError') {
-        return; // Request was aborted, ignore
+        return;
       }
       setError(err.message || 'Failed to load network graph');
     } finally {
@@ -88,8 +84,8 @@ function Network({ currentUploadId, viewMode }) {
     };
   }, [currentUploadId, fetchNetworkGraph]);
 
-  // FIX: Rebuild canonical node/edge registries when graphData changes
-  // This ensures stable lookups regardless of array order or node object recreation
+  // Rebuild canonical node/edge registries when graphData changes
+  // Ensures stable lookups regardless of array order or node object recreation
   useEffect(() => {
     const nodeMap = new Map();
     const rawNodes = graphData?.graph?.nodes || [];
@@ -144,8 +140,7 @@ function Network({ currentUploadId, viewMode }) {
       fetchTriggeredRef.current = false; // Reset fetch trigger
     }
 
-    // FIX: Force immediate refetch after applying nav filters (don't rely on passive re-fetch)
-    // Use a ref to track if we've triggered fetch for this navKey to avoid loops
+    // Trigger immediate refetch after applying nav filters
     if (navApplyRef.current.appliedFiltersKey === navKey && !fetchTriggeredRef.current && currentUploadId) {
       fetchTriggeredRef.current = true;
       // Trigger fetch immediately after state update (use setTimeout to let state settle)
@@ -198,15 +193,14 @@ function Network({ currentUploadId, viewMode }) {
     setIsStabilized(false);
     setIsStabilizing(false);
     setIsLayoutPaused(false);
-    // Graph will re-render with new filters, which will reset stabilization
   };
 
   const handleStabilize = () => {
-    if (isStabilizing) return; // Already stabilizing
+    if (isStabilizing) return;
     
     setIsStabilizing(true);
     setIsStabilized(false);
-    setIsLayoutPaused(false); // Resume if paused to allow stabilization
+    setIsLayoutPaused(false);
   };
 
   const handleResetLayout = () => {
@@ -249,7 +243,6 @@ function Network({ currentUploadId, viewMode }) {
     setFilters(prev => ({ ...prev, from, to }));
   };
 
-  // FIX: Ensure nodeId is stored as normalized string
   const handleNodeClick = (nodeId) => {
     const nodeIdStr = normalizeId(nodeId);
     if (normalizeId(selectedNode) === nodeIdStr) {
@@ -274,13 +267,11 @@ function Network({ currentUploadId, viewMode }) {
     }
   };
 
-  // FIX: Get selected node details using canonical registry (stable lookup)
   const selectedNodeData = React.useMemo(() => {
     const id = normalizeId(selectedNode);
     if (!id) return null;
     const node = nodeIndexRef.current.get(id);
     
-    // Development-only sanity check
     if (process.env.NODE_ENV !== 'production' && selectedNode && !node) {
       console.warn(`[Network] Selected node "${selectedNode}" not found in registry. Available:`, 
         Array.from(nodeIndexRef.current.keys()).slice(0, 10).join(', '), '...');
@@ -289,14 +280,11 @@ function Network({ currentUploadId, viewMode }) {
     return node || null;
   }, [selectedNode, graphData]);
   
-  // FIX: Get selected edge details using canonical registry
   const selectedEdgeData = React.useMemo(() => {
     if (!selectedEdge) return null;
-    // Use registry for stable lookup (indexed by both edge.id and "source->target" key)
     return edgeIndexRef.current.get(String(selectedEdge)) || null;
   }, [selectedEdge, graphData]);
   
-  // FIX: Get top contacts for selected node using canonical registry
   const topContacts = React.useMemo(() => {
     if (!selectedNodeData) return [];
     
@@ -798,7 +786,7 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
     }));
   }, [graphData]);
   
-  // FIX: Local node registry for NetworkGraph component (stable lookups without array.find)
+  // Local node registry for stable lookups without array.find
   const localNodeIndexRef = React.useRef(new Map());
   React.useEffect(() => {
     const nodeMap = new Map();
@@ -978,7 +966,6 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
 
       renderFrame();
       
-      // Continue animation only if not paused (or if stabilizing)
       if (!isPaused || isStabilizing) {
         animationId = requestAnimationFrame(animate);
       }
@@ -1090,7 +1077,6 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-      // FIX: Use local node registry for stable drag lookup
       const dragNodeId = normalizeId(dragNode);
       const draggedNode = localNodeIndexRef.current.get(dragNodeId);
       const pos = positionsRef.current[dragNodeId];

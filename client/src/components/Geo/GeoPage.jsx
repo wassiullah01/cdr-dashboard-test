@@ -25,7 +25,7 @@ function GeoPage({ currentUploadId, viewMode }) {
   const [error, setError] = useState(null);
   const [selectedPoint, setSelectedPoint] = useState(null);
   
-  // Separate AbortControllers for each fetch to prevent race conditions
+  // Separate AbortControllers for each fetch type to prevent race conditions
   const summaryAbortRef = useRef(null);
   const heatmapAbortRef = useRef(null);
   const pointsAbortRef = useRef(null);
@@ -39,7 +39,6 @@ function GeoPage({ currentUploadId, viewMode }) {
       return;
     }
 
-    // Abort previous summary request if still pending
     if (summaryAbortRef.current) {
       summaryAbortRef.current.abort();
     }
@@ -63,7 +62,6 @@ function GeoPage({ currentUploadId, viewMode }) {
         signal: currentAbortController.signal
       });
 
-      // Check if this request was aborted
       if (currentAbortController.signal.aborted) {
         return;
       }
@@ -74,20 +72,17 @@ function GeoPage({ currentUploadId, viewMode }) {
 
       const data = await response.json();
       
-      // Double-check abort status before setting state
       if (!currentAbortController.signal.aborted) {
         setSummary(data);
         setError(null);
       }
     } catch (err) {
-      // Silently handle abort errors
       if (err.name === 'AbortError' || currentAbortController.signal.aborted) {
         return;
       }
       console.error('Failed to fetch geo summary:', err);
       setError(err.message || 'Failed to load geographic data');
     } finally {
-      // Only update loading state if this is still the current request
       if (summaryAbortRef.current === currentAbortController) {
         setLoading(false);
         summaryAbortRef.current = null;
@@ -95,14 +90,12 @@ function GeoPage({ currentUploadId, viewMode }) {
     }
   }, [currentUploadId, filters.from, filters.to, filters.eventType, filters.phone]);
 
-  // Fetch heatmap data
   const fetchHeatmap = useCallback(async () => {
     if (!currentUploadId || geoViewMode !== 'heatmap') {
       setHeatmapData(null);
       return;
     }
 
-    // Abort previous heatmap request if still pending
     if (heatmapAbortRef.current) {
       heatmapAbortRef.current.abort();
     }
@@ -124,7 +117,6 @@ function GeoPage({ currentUploadId, viewMode }) {
         signal: currentAbortController.signal
       });
 
-      // Check if this request was aborted
       if (currentAbortController.signal.aborted) {
         return;
       }
@@ -135,12 +127,10 @@ function GeoPage({ currentUploadId, viewMode }) {
 
       const data = await response.json();
       
-      // Double-check abort status before setting state
       if (!currentAbortController.signal.aborted) {
         setHeatmapData(data);
       }
     } catch (err) {
-      // Silently handle abort errors
       if (err.name === 'AbortError' || currentAbortController.signal.aborted) {
         return;
       }
@@ -148,14 +138,12 @@ function GeoPage({ currentUploadId, viewMode }) {
     }
   }, [currentUploadId, filters.from, filters.to, filters.eventType, filters.phone, filters.gridSize, geoViewMode]);
 
-  // Fetch points data (for points view) - uses trace endpoint without phone requirement
   const fetchPoints = useCallback(async () => {
     if (!currentUploadId || geoViewMode !== 'points') {
       setPointsData(null);
       return;
     }
 
-    // Abort previous points request if still pending
     if (pointsAbortRef.current) {
       pointsAbortRef.current.abort();
     }
@@ -169,7 +157,6 @@ function GeoPage({ currentUploadId, viewMode }) {
       if (filters.to) params.append('to', filters.to);
       params.append('eventType', filters.eventType);
       params.append('limit', filters.pointLimit.toString());
-      // Phone is optional for points view
       if (filters.phone && filters.phone.trim()) {
         params.append('phone', filters.phone.trim());
       }
@@ -202,14 +189,12 @@ function GeoPage({ currentUploadId, viewMode }) {
     }
   }, [currentUploadId, filters.from, filters.to, filters.eventType, filters.phone, filters.pointLimit, geoViewMode]);
 
-  // Fetch trace data
   const fetchTrace = useCallback(async () => {
     if (!currentUploadId || geoViewMode !== 'path' || !filters.phone || !filters.phone.trim()) {
       setTraceData(null);
       return;
     }
 
-    // Abort previous trace request if still pending
     if (traceAbortRef.current) {
       traceAbortRef.current.abort();
     }
@@ -229,7 +214,6 @@ function GeoPage({ currentUploadId, viewMode }) {
         signal: currentAbortController.signal
       });
 
-      // Check if this request was aborted
       if (currentAbortController.signal.aborted) {
         return;
       }
@@ -240,12 +224,10 @@ function GeoPage({ currentUploadId, viewMode }) {
 
       const data = await response.json();
       
-      // Double-check abort status before setting state
       if (!currentAbortController.signal.aborted) {
         setTraceData(data);
       }
     } catch (err) {
-      // Silently handle abort errors
       if (err.name === 'AbortError' || currentAbortController.signal.aborted) {
         return;
       }
@@ -253,11 +235,9 @@ function GeoPage({ currentUploadId, viewMode }) {
     }
   }, [currentUploadId, filters.from, filters.to, filters.eventType, filters.phone, filters.pointLimit, geoViewMode]);
 
-  // Fetch data when filters or view mode changes
   useEffect(() => {
     fetchSummary();
     
-    // Cleanup: abort on unmount
     return () => {
       if (summaryAbortRef.current) {
         summaryAbortRef.current.abort();
@@ -268,7 +248,6 @@ function GeoPage({ currentUploadId, viewMode }) {
   useEffect(() => {
     fetchHeatmap();
     
-    // Cleanup: abort on unmount
     return () => {
       if (heatmapAbortRef.current) {
         heatmapAbortRef.current.abort();
@@ -279,7 +258,6 @@ function GeoPage({ currentUploadId, viewMode }) {
   useEffect(() => {
     fetchPoints();
     
-    // Cleanup: abort on unmount
     return () => {
       if (pointsAbortRef.current) {
         pointsAbortRef.current.abort();
@@ -290,7 +268,6 @@ function GeoPage({ currentUploadId, viewMode }) {
   useEffect(() => {
     fetchTrace();
     
-    // Cleanup: abort on unmount
     return () => {
       if (traceAbortRef.current) {
         traceAbortRef.current.abort();
@@ -323,8 +300,35 @@ function GeoPage({ currentUploadId, viewMode }) {
 
   const handleFitToData = () => {
     if (summary?.bbox) {
-      // This will be handled by GeoMap component
       setSelectedPoint({ type: 'fit', bbox: summary.bbox });
+      return;
+    }
+    let bbox = null;
+    if (geoViewMode === 'path' && traceData?.points && traceData.points.length > 0) {
+      const lats = traceData.points.map(p => p.lat).filter(l => l != null);
+      const lngs = traceData.points.map(p => p.lng).filter(l => l != null);
+      if (lats.length > 0 && lngs.length > 0) {
+        bbox = {
+          minLat: Math.min(...lats),
+          maxLat: Math.max(...lats),
+          minLng: Math.min(...lngs),
+          maxLng: Math.max(...lngs)
+        };
+      }
+    } else if (geoViewMode === 'points' && pointsData?.points && pointsData.points.length > 0) {
+      const lats = pointsData.points.map(p => p.lat).filter(l => l != null);
+      const lngs = pointsData.points.map(p => p.lng).filter(l => l != null);
+      if (lats.length > 0 && lngs.length > 0) {
+        bbox = {
+          minLat: Math.min(...lats),
+          maxLat: Math.max(...lats),
+          minLng: Math.min(...lngs),
+          maxLng: Math.max(...lngs)
+        };
+      }
+    }
+    if (bbox) {
+      setSelectedPoint({ type: 'fit', bbox });
     }
   };
 

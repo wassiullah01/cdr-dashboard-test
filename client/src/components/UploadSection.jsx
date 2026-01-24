@@ -33,7 +33,6 @@ function UploadSection({ onUploadComplete }) {
       });
     }
 
-    // Note: We don't reset the input here to allow the native input to show selected files
     // The input will be reset when all files are removed or after successful upload
   };
 

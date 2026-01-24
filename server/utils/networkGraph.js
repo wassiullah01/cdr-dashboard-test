@@ -284,7 +284,6 @@ export function trimGraph(graph, limitNodes) {
     return a.id.localeCompare(b.id);
   });
   
-  // Keep top N nodes
   const topNodes = new Set(nodesWithDegree.slice(0, limitNodes).map(n => n.id));
   
   // Create new graph with only top nodes and edges between them

@@ -19,7 +19,6 @@ function Dashboard({ uploadSummary, currentUploadId, viewMode, onViewModeChange,
     number: '',
     eventType: '',
     direction: ''
-    // NOTE: uploadId is NOT stored in filters - it's passed explicitly from props
   });
 
   // Apply navigation state filters reliably and clear router state correctly

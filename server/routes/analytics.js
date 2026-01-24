@@ -1,7 +1,4 @@
 import express from 'express';
-// MIGRATION: EventCanonical is now the single source of truth
-// Event import kept for reference only (legacy code paths disabled)
-// import Event from '../models/Event.js'; // DISABLED - canonical migration complete
 import EventCanonical from '../models/EventCanonical.js';
 import { resolveUploadId } from '../utils/uploadSession.js';
 import { buildGraph, detectCommunities, computeGraphStats, trimGraph } from '../utils/networkGraph.js';
@@ -9,23 +6,18 @@ import { buildGraph, detectCommunities, computeGraphStats, trimGraph } from '../
 const router = express.Router();
 
 // GET /api/analytics/overview - Get overview statistics
-// MIGRATED: Uses EventCanonical only (canonical collection is single source of truth)
 router.get('/overview', async (req, res) => {
   try {
     const { startDate, endDate, number } = req.query;
 
-    // Resolve uploadId filter (string, not ObjectId)
     const uploadId = await resolveUploadId(req.query);
 
-    // Build canonical filter
     const filter = {};
     
-    // STEP 1: Add uploadId filter FIRST (most important)
     if (uploadId) {
       filter.uploadId = uploadId;
     }
     
-    // STEP 2: Add other filters (date, number, etc.) - using canonical field names
     if (startDate || endDate) {
       filter.timestamp_utc = {};
       if (startDate) filter.timestamp_utc.$gte = new Date(startDate);
@@ -38,7 +30,6 @@ router.get('/overview', async (req, res) => {
       ];
     }
 
-    // STEP 3: Execute queries using EventCanonical schema
     const [
       totalEvents,
       totalCalls,
@@ -48,20 +39,17 @@ router.get('/overview', async (req, res) => {
       incomingCount,
       outgoingCount,
       internalCount,
-      // Data coverage & quality
       eventsWithGPS,
       eventsWithCellIdOnly,
       eventsWithNoLocation,
       duplicateCount,
       recordsWithWarnings,
-      // Temporal intelligence
       dateRange,
       peakHour,
       peakDayOfWeek,
       nightActivityCount,
       baselineCount,
       recentCount,
-      // Behavioral summary
       dailyStats,
       burstSessionStats,
       recentContacts
@@ -83,13 +71,11 @@ router.get('/overview', async (req, res) => {
       EventCanonical.countDocuments({ ...filter, direction: 'incoming' }),
       EventCanonical.countDocuments({ ...filter, direction: 'outgoing' }),
       EventCanonical.countDocuments({ ...filter, direction: 'internal' }),
-      // Data coverage & quality
       EventCanonical.countDocuments({ ...filter, latitude: { $exists: true, $ne: null }, longitude: { $exists: true, $ne: null } }),
       EventCanonical.countDocuments({ ...filter, cell_id: { $exists: true, $ne: null }, latitude: { $exists: false }, longitude: { $exists: false } }),
       EventCanonical.countDocuments({ ...filter, cell_id: { $exists: false }, latitude: { $exists: false } }),
       EventCanonical.countDocuments({ ...filter, is_duplicate: true }),
       EventCanonical.countDocuments({ ...filter, normalizationWarnings: { $exists: true, $ne: [] } }),
-      // Temporal intelligence
       EventCanonical.aggregate([
         { $match: filter },
         {
@@ -138,13 +124,11 @@ router.get('/overview', async (req, res) => {
           }
         }
       ]),
-      // Recent contacts (first seen in recent window)
       EventCanonical.distinct('contact_pair_key', { ...filter, baseline_window_label: 'recent' })
     ]);
 
     const durationHours = totalDuration[0]?.total ? (totalDuration[0].total / 3600).toFixed(2) : 0;
     
-    // Calculate percentages
     const callPercentage = totalEvents > 0 ? ((totalCalls / totalEvents) * 100).toFixed(1) : 0;
     const smsPercentage = totalEvents > 0 ? ((totalSMS / totalEvents) * 100).toFixed(1) : 0;
     const gpsPercentage = totalEvents > 0 ? ((eventsWithGPS / totalEvents) * 100).toFixed(1) : 0;
@@ -154,13 +138,11 @@ router.get('/overview', async (req, res) => {
     const warningsPercentage = totalEvents > 0 ? ((recordsWithWarnings / totalEvents) * 100).toFixed(1) : 0;
     const nightActivityPercentage = totalEvents > 0 ? ((nightActivityCount / totalEvents) * 100).toFixed(1) : 0;
     
-    // Temporal intelligence
     const dateRangeData = dateRange[0] || {};
     const peakHourData = peakHour[0] || {};
     const peakDayData = peakDayOfWeek[0] || {};
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     
-    // Behavioral summary
     const dailyStatsData = dailyStats[0] || {};
     const burstStatsData = burstSessionStats[0] || {};
 
@@ -224,13 +206,11 @@ router.get('/overview', async (req, res) => {
 });
 
 // GET /api/analytics/timeline - Get timeline data (events per day/hour)
-// MIGRATED: Uses EventCanonical only - uses canonical "date" field for day grouping
 // Supports mode=stacked (default) and mode=baselineRecent for behavior change analysis
 router.get('/timeline', async (req, res) => {
   try {
     const { startDate, endDate, number, eventType, groupBy = 'day', mode = 'stacked' } = req.query;
 
-    // Resolve uploadId filter (string, not ObjectId)
     const uploadId = await resolveUploadId(req.query);
 
     // Build canonical filter
@@ -300,7 +280,7 @@ router.get('/timeline', async (req, res) => {
         });
       }
 
-      // Calculate cutoff: earliest 70% = baseline, latest 30% = recent
+      // Baseline = earliest 70% of time range, recent = latest 30%
       const cutoff = new Date(minTime.getTime() + 0.7 * timeSpan);
 
       // Step 2: Aggregate baseline and recent separately
@@ -449,7 +429,6 @@ router.get('/timeline', async (req, res) => {
 });
 
 // GET /api/analytics/top-contacts - Get top contacts for a number
-// MIGRATED: Uses EventCanonical only - uses caller_number/receiver_number fields
 router.get('/top-contacts', async (req, res) => {
   try {
     const { number, startDate, endDate, eventType, limit = 10 } = req.query;
@@ -458,7 +437,6 @@ router.get('/top-contacts', async (req, res) => {
       return res.status(400).json({ error: 'Number parameter is required' });
     }
 
-    // Resolve uploadId filter (string, not ObjectId)
     const uploadId = await resolveUploadId(req.query);
 
     // Build canonical filter
@@ -582,12 +560,10 @@ router.get('/top-contacts', async (req, res) => {
 });
 
 // GET /api/analytics/geo - Get geographic data or top sites/cells
-// MIGRATED: Uses EventCanonical only - uses latitude/longitude/cell_id fields
 router.get('/geo', async (req, res) => {
   try {
     const { startDate, endDate, number, type = 'sites' } = req.query;
 
-    // Resolve uploadId filter (string, not ObjectId)
     const uploadId = await resolveUploadId(req.query);
 
     // Build canonical filter
@@ -879,7 +855,6 @@ router.get('/network', async (req, res) => {
       }
     });
 
-    // Filter nodes to only those that appear in edges (or keep all if no edges)
     const nodesInGraph = edges.length > 0 
       ? Array.from(nodeMap.values()).filter(node => node.degree > 0)
       : Array.from(nodeMap.values());
@@ -979,12 +954,10 @@ router.get('/network', async (req, res) => {
   }
 });
 
-// Simple in-memory cache for anomaly results
 const anomalyCache = new Map();
-const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
-const MAX_CACHE_SIZE = 50; // Maximum cache entries
+const CACHE_TTL = 3 * 60 * 1000;
+const MAX_CACHE_SIZE = 50;
 
-// Cache entry structure: { data, timestamp }
 function getCacheKey(uploadId, from, to, eventType, baselineRatio, phone) {
   return `${uploadId}|${from || ''}|${to || ''}|${eventType || 'all'}|${baselineRatio}|${phone || ''}`;
 }
@@ -1000,7 +973,6 @@ function getCached(key) {
 }
 
 function setCache(key, data) {
-  // Implement simple LRU: remove oldest if at capacity
   if (anomalyCache.size >= MAX_CACHE_SIZE) {
     const firstKey = anomalyCache.keys().next().value;
     anomalyCache.delete(firstKey);
@@ -1011,7 +983,6 @@ function setCache(key, data) {
 // Helper: Generate deterministic alert ID
 function generateAlertId(type, phone, related, cutoffUtc, metricsBucket) {
   const hashInput = `${type}|${phone}|${related || ''}|${cutoffUtc}|${JSON.stringify(metricsBucket)}`;
-  // Simple hash function
   let hash = 0;
   for (let i = 0; i < hashInput.length; i++) {
     const char = hashInput.charCodeAt(i);
@@ -1033,7 +1004,6 @@ router.get('/anomalies', async (req, res) => {
   try {
     const { uploadId, from, to, eventType = 'all', baselineRatio = 0.7, limit = 50, phone } = req.query;
 
-    // Validation
     if (!uploadId) {
       return res.status(400).json({ error: 'uploadId is required' });
     }
@@ -1067,7 +1037,6 @@ router.get('/anomalies', async (req, res) => {
       }
     }
 
-    // Phone filter (if provided, compute anomalies only for that phone)
     if (phone) {
       baseFilter.$or = [
         { caller_number: phone },
@@ -1374,11 +1343,10 @@ async function computeNewContactEmergence(baselineFilter, recentFilter, phoneFil
       EventCanonical.distinct('receiver_number', { ...recentFilter, receiver_number: { $exists: true, $nin: [null, ''] } })
     ]);
     const allPhones = new Set([...baselineCallers, ...baselineReceivers, ...recentCallers, ...recentReceivers]);
-    // Filter out empty strings and whitespace-only
     phonesToAnalyze = Array.from(allPhones).filter(p => p && String(p).trim().length > 0);
   }
 
-  // Use aggregation to compute baseline counterparties (bidirectional) for all owners at once
+  // Compute baseline counterparties (bidirectional) for all owners at once
   const baselineCounterpartiesMap = await EventCanonical.aggregate([
     { $match: baselineFilter },
     {
@@ -1979,8 +1947,6 @@ router.get('/geo/summary', async (req, res) => {
       ];
     }
 
-    // Only events with valid coordinates
-    // $exists: true ensures field exists, $ne: null excludes null, $gte/$lte ensures valid range
     filter.latitude = { 
       $exists: true, 
       $ne: null, 
