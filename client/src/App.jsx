@@ -5,6 +5,7 @@ import UploadSection from './components/UploadSection';
 import Dashboard from './components/Dashboard';
 import Network from './components/Network';
 import Alerts from './components/Alerts';
+import GeoPage from './components/Geo/GeoPage';
 import { apiUrl } from './utils/api';
 import './styles/dashboard.css';
 
@@ -18,7 +19,8 @@ function App() {
   
   // Determine active view from URL
   const activeView = location.pathname === '/network' ? 'network' : 
-                     location.pathname === '/alerts' ? 'alerts' : 'dashboard';
+                     location.pathname === '/alerts' ? 'alerts' :
+                     location.pathname === '/map' ? 'map' : 'dashboard';
 
   // Verify saved uploadId exists in database on mount
   useEffect(() => {
@@ -118,6 +120,12 @@ function App() {
                     >
                       Alerts
                     </Link>
+                    <Link
+                      to="/map"
+                      className={`nav-tab ${activeView === 'map' ? 'active' : ''}`}
+                    >
+                      Map
+                    </Link>
                   </div>
                 </div>
 
@@ -160,6 +168,12 @@ function App() {
                     >
                       Alerts
                     </Link>
+                    <Link
+                      to="/map"
+                      className={`nav-tab ${activeView === 'map' ? 'active' : ''}`}
+                    >
+                      Map
+                    </Link>
                   </div>
                 </div>
 
@@ -199,10 +213,61 @@ function App() {
                     >
                       Alerts
                     </Link>
+                    <Link
+                      to="/map"
+                      className={`nav-tab ${activeView === 'map' ? 'active' : ''}`}
+                    >
+                      Map
+                    </Link>
                   </div>
                 </div>
 
                 <Alerts 
+                  currentUploadId={currentUploadId}
+                  viewMode={viewMode}
+                />
+              </>
+            )
+          } 
+        />
+        <Route 
+          path="/map" 
+          element={
+            !uploadComplete ? (
+              <UploadSection onUploadComplete={handleUploadComplete} />
+            ) : (
+              <>
+                {/* Navigation Tabs */}
+                <div className="view-navigation">
+                  <div className="container">
+                    <Link
+                      to="/"
+                      className={`nav-tab ${activeView === 'dashboard' ? 'active' : ''}`}
+                    >
+                      Dashboard
+                    </Link>
+                    <Link
+                      to="/network"
+                      className={`nav-tab ${activeView === 'network' ? 'active' : ''}`}
+                    >
+                      Network
+                    </Link>
+                    <Link
+                      to="/alerts"
+                      className={`nav-tab ${activeView === 'alerts' ? 'active' : ''}`}
+                    >
+                      Alerts
+                    </Link>
+                    <Link
+                      to="/map"
+                      className={`nav-tab ${activeView === 'map' ? 'active' : ''}`}
+                    >
+                      Map
+                    </Link>
+                  </div>
+                </div>
+
+                <GeoPage 
                   currentUploadId={currentUploadId}
                   viewMode={viewMode}
                 />

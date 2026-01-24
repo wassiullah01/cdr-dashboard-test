@@ -9,7 +9,13 @@ function Network({ currentUploadId, viewMode }) {
   const navState = location.state || {};
   
   // FIX: Canonicalize ALL node IDs using helper
-  const normalizeId = (v) => String(v || '').trim();
+  const normalizeId = (v) => String(v ?? '').trim();
+  
+  // FIX: Canonical node registry for stable lookups in canvas/physics simulation
+  // Node objects are recreated and array order can change, so we maintain a stable
+  // Map keyed by normalized ID to ensure selection/details always match the clicked node
+  const nodeIndexRef = useRef(new Map());
+  const edgeIndexRef = useRef(new Map());
   
   // FIX: Use refs to track applied navigation state (resilient to StrictMode double effects)
   const navApplyRef = useRef({ appliedFiltersKey: null, appliedFocusKey: null });
@@ -82,6 +88,28 @@ function Network({ currentUploadId, viewMode }) {
     };
   }, [currentUploadId, fetchNetworkGraph]);
 
+  // FIX: Rebuild canonical node/edge registries when graphData changes
+  // This ensures stable lookups regardless of array order or node object recreation
+  useEffect(() => {
+    const nodeMap = new Map();
+    const rawNodes = graphData?.graph?.nodes || [];
+    for (const n of rawNodes) {
+      const id = normalizeId(n.id);
+      if (id) nodeMap.set(id, n);
+    }
+    nodeIndexRef.current = nodeMap;
+
+    const edgeMap = new Map();
+    const rawEdges = graphData?.graph?.edges || [];
+    for (const e of rawEdges) {
+      const k = `${normalizeId(e.source)}->${normalizeId(e.target)}`;
+      edgeMap.set(k, e);
+      // Also index by edge.id if it exists for direct lookup
+      if (e.id) edgeMap.set(String(e.id), e);
+    }
+    edgeIndexRef.current = edgeMap;
+  }, [graphData]);
+
   // FIX: Apply navigation state filters into live filters state (not just defaultFilters)
   // Build stable navKey to track unique navigation events
   const navKey = React.useMemo(() => {
@@ -141,12 +169,15 @@ function Network({ currentUploadId, viewMode }) {
 
     // Apply focus once per unique navigation event
     if (navApplyRef.current.appliedFocusKey !== navKey) {
-        const focusPhoneStr = normalizeId(focusPhone);
-      const exists = graphData.graph.nodes.some(n => normalizeId(n.id) === focusPhoneStr);
+      const focusPhoneStr = normalizeId(focusPhone);
+      // FIX: Use canonical registry for stable lookup
+      const exists = nodeIndexRef.current.has(focusPhoneStr);
       if (exists) {
         setSelectedNode(focusPhoneStr);
         setSelectedEdge(null);
         setHighlightedCommunity(null);
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[Network] Focus phone "${focusPhoneStr}" not found in registry`);
       }
       navApplyRef.current.appliedFocusKey = navKey;
       
@@ -243,40 +274,55 @@ function Network({ currentUploadId, viewMode }) {
     }
   };
 
-  // FIX: Get selected node details with normalized string comparison
+  // FIX: Get selected node details using canonical registry (stable lookup)
   const selectedNodeData = React.useMemo(() => {
-    if (!selectedNode || !graphData?.graph?.nodes) return null;
+    const id = normalizeId(selectedNode);
+    if (!id) return null;
+    const node = nodeIndexRef.current.get(id);
     
-    const selectedId = normalizeId(selectedNode);
-    return graphData.graph.nodes.find(n => normalizeId(n.id) === selectedId) || null;
+    // Development-only sanity check
+    if (process.env.NODE_ENV !== 'production' && selectedNode && !node) {
+      console.warn(`[Network] Selected node "${selectedNode}" not found in registry. Available:`, 
+        Array.from(nodeIndexRef.current.keys()).slice(0, 10).join(', '), '...');
+    }
+    
+    return node || null;
   }, [selectedNode, graphData]);
   
-  // Get selected edge details
-  const selectedEdgeData = graphData?.graph?.edges?.find(e => e.id === selectedEdge);
+  // FIX: Get selected edge details using canonical registry
+  const selectedEdgeData = React.useMemo(() => {
+    if (!selectedEdge) return null;
+    // Use registry for stable lookup (indexed by both edge.id and "source->target" key)
+    return edgeIndexRef.current.get(String(selectedEdge)) || null;
+  }, [selectedEdge, graphData]);
   
-  // FIX: Get top contacts for selected node with normalized string matching
-  const topContacts = selectedNodeData
-    ? graphData?.graph?.edges
-        ?.filter(e => {
-          const sourceId = normalizeId(e.source);
-          const targetId = normalizeId(e.target);
-          const selectedId = normalizeId(selectedNode);
-          return sourceId === selectedId || targetId === selectedId;
-        })
-        .map(e => {
-          const sourceId = normalizeId(e.source);
-          const targetId = normalizeId(e.target);
-          const selectedId = normalizeId(selectedNode);
-          return {
-            number: sourceId === selectedId ? targetId : sourceId,
-            weight: e.weight,
-            eventCount: e.eventCount,
-            totalDuration: e.totalDuration
-          };
-        })
-        .sort((a, b) => b.weight - a.weight)
-        .slice(0, 10)
-    : [];
+  // FIX: Get top contacts for selected node using canonical registry
+  const topContacts = React.useMemo(() => {
+    if (!selectedNodeData) return [];
+    
+    const selectedId = normalizeId(selectedNode);
+    if (!selectedId) return [];
+    
+    const contacts = [];
+    const rawEdges = graphData?.graph?.edges || [];
+    
+    for (const e of rawEdges) {
+      const sourceId = normalizeId(e.source);
+      const targetId = normalizeId(e.target);
+      if (sourceId === selectedId || targetId === selectedId) {
+        contacts.push({
+          number: sourceId === selectedId ? targetId : sourceId,
+          weight: e.weight,
+          eventCount: e.eventCount,
+          totalDuration: e.totalDuration
+        });
+      }
+    }
+    
+    return contacts
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 10);
+  }, [selectedNodeData, graphData, selectedNode]);
 
   return (
     <div className="network-page">
@@ -519,8 +565,8 @@ function Network({ currentUploadId, viewMode }) {
                       .map(node => (
                         <div
                           key={node.id}
-                          className={`node-item ${String(selectedNode || '') === String(node.id || '') ? 'selected' : ''}`}
-                          onClick={() => handleNodeClick(String(node.id || ''))}
+                          className={`node-item ${normalizeId(selectedNode) === normalizeId(node.id) ? 'selected' : ''}`}
+                          onClick={() => handleNodeClick(normalizeId(node.id))}
                         >
                           <div className="node-number">{node.id}</div>
                           <div className="node-stats">
@@ -568,7 +614,8 @@ function Network({ currentUploadId, viewMode }) {
                       graphData.communities.map((comm, index) => {
                         // Only show "Isolated nodes" if all nodes in community have degree 0
                         const allIsolated = comm.topNodes.every(node => {
-                          const nodeData = graphData.graph.nodes.find(n => n.id === node.id);
+                          const nodeId = normalizeId(node.id);
+                          const nodeData = nodeIndexRef.current.get(nodeId);
                           return nodeData && nodeData.degree === 0;
                         });
                         const displayLabel = allIsolated && comm.size > 0
@@ -599,7 +646,7 @@ function Network({ currentUploadId, viewMode }) {
                 </div>
 
                 {/* FIX: Show warning if focusPhone was provided but not found in graph */}
-                {focusPhone && graphData.graph.nodes.length > 0 && !graphData.graph.nodes.some(n => normalizeId(n.id) === normalizeId(focusPhone)) && (
+                {focusPhone && graphData.graph.nodes.length > 0 && !nodeIndexRef.current.has(normalizeId(focusPhone)) && (
                   <div className="sidebar-section">
                     <div className="warning-box" style={{ 
                       background: '#fef3c7', 
@@ -728,8 +775,8 @@ function Network({ currentUploadId, viewMode }) {
 
 // Network Graph Visualization Component (Canvas-based)
 function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommunity, onNodeClick, onEdgeClick, isPaused = false, isStabilizing = false, onStabilizationComplete }) {
-  // FIX: Canonicalize ALL node IDs using helper
-  const normalizeId = (v) => String(v || '').trim();
+  // FIX: Canonicalize ALL node IDs using helper (consistent with parent)
+  const normalizeId = (v) => String(v ?? '').trim();
   
   const canvasRef = React.useRef(null);
   const animationFrameRef = React.useRef(null);
@@ -750,6 +797,17 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       color: getCommunityColor(node.community, graphData.communities?.length || 0)
     }));
   }, [graphData]);
+  
+  // FIX: Local node registry for NetworkGraph component (stable lookups without array.find)
+  const localNodeIndexRef = React.useRef(new Map());
+  React.useEffect(() => {
+    const nodeMap = new Map();
+    nodes.forEach(node => {
+      const nodeId = normalizeId(node.id);
+      if (nodeId) nodeMap.set(nodeId, node);
+    });
+    localNodeIndexRef.current = nodeMap;
+  }, [nodes]);
 
   const edges = React.useMemo(() => {
     if (!graphData?.graph?.edges) return [];
@@ -1032,8 +1090,9 @@ function NetworkGraph({ graphData, selectedNode, selectedEdge, highlightedCommun
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
+      // FIX: Use local node registry for stable drag lookup
       const dragNodeId = normalizeId(dragNode);
-      const draggedNode = nodes.find(n => normalizeId(n.id) === dragNodeId);
+      const draggedNode = localNodeIndexRef.current.get(dragNodeId);
       const pos = positionsRef.current[dragNodeId];
       if (pos && draggedNode) {
         const nodeSize = draggedNode.size || 10;

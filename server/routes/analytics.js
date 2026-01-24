@@ -1946,4 +1946,314 @@ async function computeBurstPatternChange(baselineFilter, recentFilter, baselineD
   return alerts;
 }
 
+// GEOGRAPHY ANALYTICS ENDPOINTS
+
+// GET /api/geo/summary - Get geographic summary statistics
+router.get('/geo/summary', async (req, res) => {
+  try {
+    const uploadId = await resolveUploadId(req.query);
+    if (!uploadId) {
+      return res.status(400).json({ error: 'uploadId is required' });
+    }
+
+    const { from, to, eventType = 'all', phone } = req.query;
+
+    // Build filter
+    const filter = { uploadId };
+    
+    if (from || to) {
+      filter.timestamp_utc = {};
+      if (from) filter.timestamp_utc.$gte = new Date(from);
+      if (to) filter.timestamp_utc.$lte = new Date(to);
+    }
+
+    if (eventType && eventType !== 'all') {
+      filter.event_type = eventType;
+    }
+
+    if (phone) {
+      const phoneStr = String(phone).trim();
+      filter.$or = [
+        { caller_number: phoneStr },
+        { receiver_number: phoneStr }
+      ];
+    }
+
+    // Only events with valid coordinates
+    // $exists: true ensures field exists, $ne: null excludes null, $gte/$lte ensures valid range
+    filter.latitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -90, 
+      $lte: 90
+    };
+    filter.longitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -180, 
+      $lte: 180
+    };
+
+    // Get summary stats
+    const [totalEventsInWindow, eventsWithCoords, bboxResult] = await Promise.all([
+      EventCanonical.countDocuments({ uploadId, ...(from || to ? { timestamp_utc: filter.timestamp_utc } : {}) }),
+      EventCanonical.countDocuments(filter),
+      EventCanonical.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            minLat: { $min: '$latitude' },
+            maxLat: { $max: '$latitude' },
+            minLng: { $min: '$longitude' },
+            maxLng: { $max: '$longitude' }
+          }
+        }
+      ])
+    ]);
+
+    // Get unique locations (rounded to 0.01 degree grid)
+    const uniqueLocations = await EventCanonical.aggregate([
+      { $match: filter },
+      {
+        $project: {
+          latGrid: { $multiply: [{ $floor: { $divide: ['$latitude', 0.01] } }, 0.01] },
+          lngGrid: { $multiply: [{ $floor: { $divide: ['$longitude', 0.01] } }, 0.01] }
+        }
+      },
+      {
+        $group: {
+          _id: { lat: '$latGrid', lng: '$lngGrid' }
+        }
+      },
+      { $count: 'count' }
+    ]);
+
+    const bbox = bboxResult[0] || null;
+    const timeRange = await EventCanonical.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          minTime: { $min: '$timestamp_utc' },
+          maxTime: { $max: '$timestamp_utc' }
+        }
+      }
+    ]);
+
+    res.json({
+      totalEventsInWindow,
+      eventsWithCoords,
+      uniqueLocationsCount: uniqueLocations[0]?.count || 0,
+      bbox: bbox ? {
+        minLat: bbox.minLat,
+        maxLat: bbox.maxLat,
+        minLng: bbox.minLng,
+        maxLng: bbox.maxLng
+      } : null,
+      timeRange: timeRange[0] ? {
+        minTime: timeRange[0].minTime,
+        maxTime: timeRange[0].maxTime
+      } : null
+    });
+  } catch (error) {
+    console.error('Geo summary error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/geo/heatmap - Get aggregated heatmap data
+router.get('/geo/heatmap', async (req, res) => {
+  try {
+    const uploadId = await resolveUploadId(req.query);
+    if (!uploadId) {
+      return res.status(400).json({ error: 'uploadId is required' });
+    }
+
+    const { from, to, eventType = 'all', phone, grid = '0.01' } = req.query;
+    const gridSize = parseFloat(grid) || 0.01;
+
+    // Build filter
+    const filter = { uploadId };
+    
+    if (from || to) {
+      filter.timestamp_utc = {};
+      if (from) filter.timestamp_utc.$gte = new Date(from);
+      if (to) filter.timestamp_utc.$lte = new Date(to);
+    }
+
+    if (eventType && eventType !== 'all') {
+      filter.event_type = eventType;
+    }
+
+    if (phone) {
+      const phoneStr = String(phone).trim();
+      filter.$or = [
+        { caller_number: phoneStr },
+        { receiver_number: phoneStr }
+      ];
+    }
+
+    // Only events with valid coordinates
+    filter.latitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -90, 
+      $lte: 90,
+      $nin: [null, undefined, '']
+    };
+    filter.longitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -180, 
+      $lte: 180,
+      $nin: [null, undefined, '']
+    };
+
+    // Aggregate by grid cells with optional duration weighting
+    const heatCells = await EventCanonical.aggregate([
+      { $match: filter },
+      {
+        $project: {
+          lat: {
+            $multiply: [
+              { $floor: { $divide: ['$latitude', gridSize] } },
+              gridSize
+            ]
+          },
+          lng: {
+            $multiply: [
+              { $floor: { $divide: ['$longitude', gridSize] } },
+              gridSize
+            ]
+          },
+          durationSec: { $ifNull: ['$call_duration_seconds', 0] },
+          eventType: '$event_type'
+        }
+      },
+      {
+        $group: {
+          _id: { lat: '$lat', lng: '$lng' },
+          eventCount: { $sum: 1 },
+          durationSum: { $sum: '$durationSec' }
+        }
+      },
+      {
+        $project: {
+          lat: '$_id.lat',
+          lng: '$_id.lng',
+          weight: {
+            $add: [
+              '$eventCount',
+              { $min: [{ $divide: ['$durationSum', 60] }, 10] } // Cap duration boost at 10
+            ]
+          }
+        }
+      },
+      { $sort: { weight: -1 } }
+    ]);
+
+    res.json({ cells: heatCells });
+  } catch (error) {
+    console.error('Geo heatmap error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/geo/trace - Get movement trace for a specific phone
+router.get('/geo/trace', async (req, res) => {
+  try {
+    const uploadId = await resolveUploadId(req.query);
+    if (!uploadId) {
+      return res.status(400).json({ error: 'uploadId is required' });
+    }
+
+    const { from, to, eventType = 'all', phone, limit = '2000' } = req.query;
+    const limitNum = parseInt(limit) || 2000;
+
+    // Build filter
+    const filter = { uploadId };
+    
+    if (from || to) {
+      filter.timestamp_utc = {};
+      if (from) filter.timestamp_utc.$gte = new Date(from);
+      if (to) filter.timestamp_utc.$lte = new Date(to);
+    }
+
+    if (eventType && eventType !== 'all') {
+      filter.event_type = eventType;
+    }
+
+    // Phone filter is optional (if provided, filter by phone; otherwise return all points)
+    if (phone) {
+      const phoneStr = String(phone).trim();
+      filter.$or = [
+        { caller_number: phoneStr },
+        { receiver_number: phoneStr }
+      ];
+    }
+
+    // Only events with valid coordinates
+    filter.latitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -90, 
+      $lte: 90,
+      $nin: [null, undefined, '']
+    };
+    filter.longitude = { 
+      $exists: true, 
+      $ne: null, 
+      $gte: -180, 
+      $lte: 180,
+      $nin: [null, undefined, '']
+    };
+
+    // Get all matching points sorted by time
+    const allPoints = await EventCanonical.aggregate([
+      { $match: filter },
+      { $sort: { timestamp_utc: 1 } },
+      {
+        $project: {
+          lat: '$latitude',
+          lng: '$longitude',
+          timestampUtc: '$timestamp_utc',
+          eventType: '$event_type',
+          counterparty: phone ? {
+            $cond: [
+              { $eq: [{ $trim: { $input: '$caller_number' } }, String(phone).trim()] },
+              '$receiver_number',
+              '$caller_number'
+            ]
+          } : {
+            $concat: [
+              { $ifNull: ['$caller_number', ''] },
+              ' ↔ ',
+              { $ifNull: ['$receiver_number', ''] }
+            ]
+          }
+        }
+      }
+    ]);
+
+    // Downsample if needed (keep start, end, and evenly sample middle)
+    let points = allPoints;
+    if (allPoints.length > limitNum) {
+      const step = Math.floor(allPoints.length / limitNum);
+      const sampled = [];
+      sampled.push(allPoints[0]); // Start
+      for (let i = step; i < allPoints.length - step; i += step) {
+        sampled.push(allPoints[i]);
+      }
+      sampled.push(allPoints[allPoints.length - 1]); // End
+      points = sampled;
+    }
+
+    res.json({ points });
+  } catch (error) {
+    console.error('Geo trace error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
